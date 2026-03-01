@@ -65,6 +65,29 @@ impl HashChain {
         true
     }
 
+    /// Returns the entry ID of the first invalid entry, or `None` if the chain is intact.
+    ///
+    /// Unlike [`verify`](Self::verify), which returns a simple boolean, this method
+    /// pinpoints exactly which entry broke the chain — useful for error reporting.
+    pub fn find_first_invalid(&self, entries: &[LedgerEntry]) -> Option<u64> {
+        if entries.is_empty() {
+            return None;
+        }
+        if self.hashes.len() != entries.len() + 1 {
+            return entries.first().map(|e| e.id);
+        }
+        for (i, entry) in entries.iter().enumerate() {
+            let expected_prev = &self.hashes[i];
+            if entry.prev_hash != *expected_prev
+                || !entry.verify()
+                || entry.hash != self.hashes[i + 1]
+            {
+                return Some(entry.id);
+            }
+        }
+        None
+    }
+
     /// Compute a standalone SHA-256 hash of arbitrary data, returned as a hex string.
     pub fn sha256(data: &[u8]) -> String {
         let mut hasher = Sha256::new();

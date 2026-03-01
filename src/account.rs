@@ -32,7 +32,7 @@ pub type Balance = i128;
 pub const RATE_SCALE: i128 = 1_000_000;
 
 /// Unique identifier for an account.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct AccountId(pub u64);
 
 impl fmt::Display for AccountId {

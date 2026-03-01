@@ -16,7 +16,20 @@ impl Ledger {
     }
 
     /// Find a single entry by its numeric ID. Returns `None` if not found.
+    ///
+    /// This is an O(1) lookup when entry IDs are sequential (the default).
+    /// Falls back to O(n) scan if the index doesn't match.
     pub fn find_entry(&self, id: u64) -> Option<&LedgerEntry> {
+        if id == 0 {
+            return None;
+        }
+        // O(1) fast path: entry IDs are sequential starting from 1
+        if let Some(entry) = self.entries.get((id - 1) as usize)
+            && entry.id == id
+        {
+            return Some(entry);
+        }
+        // Fallback: linear scan (handles non-sequential IDs from external data)
         self.entries.iter().find(|e| e.id == id)
     }
 

@@ -42,10 +42,10 @@ pub use types::{AccountId, AccountType, Balance, Currency, ExchangeRate, LedgerE
 pub use validation::LedgerError;
 pub use chain::HashChain;
 pub use reconcile::{ReconcileRecord, ReconcileResult, ReconcileStatus, reconcile};
-pub use format::{format_balance, format_balance_with_currency, parse_balance};
+pub use format::{format_balance, format_balance_with_currency, parse_balance, format_amount, format_amount_with_currency, parse_amount};
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 /// The core ledger engine.
 ///
@@ -59,9 +59,9 @@ use std::collections::{HashMap, HashSet};
 /// - **Currency exchange**: [`record_exchange`](Self::record_exchange), [`record_exchange_at`](Self::record_exchange_at), [`record_exchange_full`](Self::record_exchange_full) — in [`exchange`]
 /// - **Queries**: [`entries`](Self::entries), [`find_entry`](Self::find_entry), [`entries_for_account`](Self::entries_for_account), [`entries_in_range`](Self::entries_in_range), [`verify_chain`](Self::verify_chain), [`trial_balance`](Self::trial_balance) — in [`queries`]
 /// - **Persistence**: [`save_json`](Self::save_json), [`load_json`](Self::load_json) — in [`persistence`]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ledger {
-    pub(crate) accounts: HashMap<AccountId, Account>,
+    pub(crate) accounts: BTreeMap<AccountId, Account>,
     pub(crate) entries: Vec<LedgerEntry>,
     pub(crate) chain: HashChain,
     pub(crate) idempotency_keys: HashSet<String>,
@@ -83,7 +83,7 @@ impl Ledger {
     /// ```
     pub fn new() -> Self {
         Self {
-            accounts: HashMap::new(),
+            accounts: BTreeMap::new(),
             entries: Vec::new(),
             chain: HashChain::new(),
             idempotency_keys: HashSet::new(),

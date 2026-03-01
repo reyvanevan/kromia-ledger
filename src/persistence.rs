@@ -35,8 +35,8 @@ impl Ledger {
     pub fn load_json(json: &str) -> Result<Self, LedgerError> {
         let mut ledger: Self = serde_json::from_str(json)
             .map_err(|e| LedgerError::Serialization(e.to_string()))?;
-        if !ledger.verify_chain() {
-            return Err(LedgerError::ChainBroken(0));
+        if let Some(broken_id) = ledger.chain.find_first_invalid(&ledger.entries) {
+            return Err(LedgerError::ChainBroken(broken_id));
         }
         // Rebuild idempotency key index from loaded entries
         ledger.idempotency_keys = ledger.entries.iter()

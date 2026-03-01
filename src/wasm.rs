@@ -106,14 +106,32 @@ impl WasmLedger {
 
     pub fn verify_chain(&self) -> bool { self.inner.verify_chain() }
 
-    pub fn trial_balance(&self) -> f64 { self.inner.trial_balance() as f64 / 100.0 }
+    /// Returns the trial balance as a raw integer in the smallest currency unit.
+    ///
+    /// For single-currency ledgers this is always 0 when all transactions balance.
+    /// For multi-currency ledgers, use per-currency reporting instead.
+    pub fn trial_balance(&self) -> i64 { self.inner.trial_balance() as i64 }
 
     pub fn entry_count(&self) -> usize { self.inner.entries().len() }
 
-    pub fn get_balance(&self, id: u64) -> Result<f64, JsValue> {
+    /// Returns the raw balance in the smallest currency unit (e.g. cents for USD).
+    ///
+    /// JavaScript can safely handle integers up to 2^53, which covers
+    /// values up to ~90 trillion — far beyond practical ledger needs.
+    pub fn get_balance(&self, id: u64) -> Result<i64, JsValue> {
         self.inner.get_balance(crate::types::AccountId(id))
-            .map(|b| b as f64 / 100.0)
+            .map(|b| b as i64)
             .ok_or_else(|| JsValue::from_str("account not found"))
+    }
+
+    /// Returns the balance as a human-readable formatted string.
+    ///
+    /// Uses the account's currency precision for formatting.
+    /// Example: `"1,234.56"` for USD, `"1,000,000"` for IDR.
+    pub fn get_balance_formatted(&self, id: u64) -> Result<String, JsValue> {
+        let acc = self.inner.get_account(crate::types::AccountId(id))
+            .ok_or_else(|| JsValue::from_str("account not found"))?;
+        Ok(crate::format::format_amount(acc.balance, acc.currency.precision))
     }
 
     pub fn save_json(&self) -> Result<String, JsValue> {
