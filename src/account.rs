@@ -182,3 +182,87 @@ impl fmt::Display for Account {
         write!(f, "[{}] {} — {} ({}){}", self.code, self.name, self.account_type, self.currency, status)
     }
 }
+
+// ── Ledger account management ──────────────────────────────────────
+
+use crate::validation::LedgerError;
+use crate::Ledger;
+
+impl Ledger {
+    /// Create a new account with a unique code and an assigned currency.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` — Human-readable account name (e.g. "Cash", "Pendapatan")
+    /// * `code` — Unique chart-of-accounts code (e.g. "1000", "4100")
+    /// * `account_type` — Classification ([`AccountType`])
+    /// * `currency` — Currency metadata for this account ([`Currency`])
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LedgerError::DuplicateAccountCode`] if `code` is already in use.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use kromia_ledger::{Ledger, AccountType, Currency};
+    ///
+    /// let mut ledger = Ledger::new();
+    /// let cash = ledger.create_account("Cash", "1000", AccountType::Asset, Currency::usd()).unwrap();
+    /// assert_eq!(ledger.get_account(cash).unwrap().name, "Cash");
+    /// ```
+    pub fn create_account(
+        &mut self,
+        name: &str,
+        code: &str,
+        account_type: AccountType,
+        currency: Currency,
+    ) -> Result<AccountId, LedgerError> {
+        if self.accounts.values().any(|a| a.code == code) {
+            return Err(LedgerError::DuplicateAccountCode(code.to_string()));
+        }
+        let id = AccountId(self.next_account_id);
+        self.next_account_id += 1;
+        self.accounts.insert(id, Account {
+            id,
+            name: name.to_string(),
+            code: code.to_string(),
+            account_type,
+            currency,
+            balance: 0,
+            active: true,
+        });
+        Ok(id)
+    }
+
+    /// Soft-deactivate an account. Inactive accounts cannot participate in new transactions.
+    pub fn deactivate_account(&mut self, id: AccountId) -> Result<(), LedgerError> {
+        let account = self.accounts.get_mut(&id)
+            .ok_or(LedgerError::AccountNotFound(id.0))?;
+        account.active = false;
+        Ok(())
+    }
+
+    /// Look up an account by its [`AccountId`]. Returns `None` if not found.
+    pub fn get_account(&self, id: AccountId) -> Option<&Account> {
+        self.accounts.get(&id)
+    }
+
+    /// Look up an account by its chart-of-accounts code (e.g. `"1000"`).
+    /// Returns `None` if no account has that code.
+    pub fn account_by_code(&self, code: &str) -> Option<&Account> {
+        self.accounts.values().find(|a| a.code == code)
+    }
+
+    /// Get the current balance of an account. Returns `None` if the account doesn't exist.
+    ///
+    /// The balance is in the smallest currency unit (e.g. cents for USD).
+    pub fn get_balance(&self, id: AccountId) -> Option<Balance> {
+        self.accounts.get(&id).map(|a| a.balance)
+    }
+
+    /// Iterate over all accounts in the ledger.
+    pub fn accounts(&self) -> impl Iterator<Item = &Account> {
+        self.accounts.values()
+    }
+}

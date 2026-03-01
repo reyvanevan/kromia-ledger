@@ -1,0 +1,55 @@
+//! Ledger query methods.
+//!
+//! This module extends [`Ledger`] with read-only query methods
+//! for inspecting entries and verifying integrity.
+
+use crate::account::{AccountId, Balance};
+use crate::entry::LedgerEntry;
+use crate::Ledger;
+
+impl Ledger {
+    // ── Queries ─────────────────────────────────────────────────────
+
+    /// Returns a slice of all ledger entries in chronological order.
+    pub fn entries(&self) -> &[LedgerEntry] {
+        &self.entries
+    }
+
+    /// Find a single entry by its numeric ID. Returns `None` if not found.
+    pub fn find_entry(&self, id: u64) -> Option<&LedgerEntry> {
+        self.entries.iter().find(|e| e.id == id)
+    }
+
+    /// Returns all entries that involve the given account (debit or credit side).
+    pub fn entries_for_account(&self, account_id: AccountId) -> Vec<&LedgerEntry> {
+        self.entries.iter()
+            .filter(|e| e.transaction.lines.iter().any(|l| l.account_id == account_id))
+            .collect()
+    }
+
+    /// Returns entries within a timestamp range (inclusive).
+    pub fn entries_in_range(&self, from_ts: u64, to_ts: u64) -> Vec<&LedgerEntry> {
+        self.entries.iter()
+            .filter(|e| e.timestamp >= from_ts && e.timestamp <= to_ts)
+            .collect()
+    }
+
+    // ── Integrity ───────────────────────────────────────────────────
+
+    /// Verify the integrity of the entire hash chain.
+    ///
+    /// Returns `true` if every entry's hash is consistent with its content
+    /// and its predecessor. Returns `false` if any entry has been tampered with.
+    pub fn verify_chain(&self) -> bool {
+        self.chain.verify(&self.entries)
+    }
+
+    /// Compute the trial balance across all accounts.
+    ///
+    /// For single-currency ledgers, this returns exactly `0` if all transactions
+    /// are balanced. For multi-currency ledgers (with exchange transactions),
+    /// this value may be non-zero — use per-currency reporting instead.
+    pub fn trial_balance(&self) -> Balance {
+        self.accounts.values().map(|a| a.signed_balance()).sum()
+    }
+}
