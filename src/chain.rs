@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::types::LedgerEntry;
@@ -5,6 +6,7 @@ use crate::types::LedgerEntry;
 const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
 /// Manages the SHA-256 hash chain for ledger entries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HashChain {
     hashes: Vec<String>,
 }
@@ -16,25 +18,20 @@ impl HashChain {
         }
     }
 
-    /// Returns the most recent hash in the chain.
     pub fn last_hash(&self) -> String {
         self.hashes.last().cloned().unwrap_or_else(|| GENESIS_HASH.to_string())
     }
 
-    /// Appends a new entry's hash to the chain.
     pub fn append(&mut self, entry: &LedgerEntry) {
         self.hashes.push(entry.hash.clone());
     }
 
     /// Verifies the entire chain against the provided entries.
-    /// Each entry's `prev_hash` must match the preceding hash in the chain,
-    /// and each entry's stored hash must match its recomputed hash.
     pub fn verify(&self, entries: &[LedgerEntry]) -> bool {
         if entries.is_empty() {
             return true;
         }
 
-        // Chain must have genesis + one hash per entry
         if self.hashes.len() != entries.len() + 1 {
             return false;
         }
@@ -55,7 +52,6 @@ impl HashChain {
         true
     }
 
-    /// Computes a standalone SHA-256 hash of arbitrary data.
     pub fn sha256(data: &[u8]) -> String {
         let mut hasher = Sha256::new();
         hasher.update(data);
@@ -88,7 +84,7 @@ mod tests {
             &[(AccountId(1), 100)],
             &[(AccountId(2), 100)],
         ).unwrap();
-        LedgerEntry::new(id, tx, prev_hash)
+        LedgerEntry::new(id, tx, prev_hash, 1_000_000 + id)
     }
 
     #[test]
@@ -125,9 +121,19 @@ mod tests {
         let mut e2 = make_entry(2, &chain.last_hash());
         chain.append(&e2);
 
-        // Tamper with the entry
         e2.transaction.description = "TAMPERED".to_string();
 
         assert!(!chain.verify(&[e1, e2]));
+    }
+
+    #[test]
+    fn serialization_roundtrip() {
+        let mut chain = HashChain::new();
+        let e1 = make_entry(1, &chain.last_hash());
+        chain.append(&e1);
+
+        let json = serde_json::to_string(&chain).unwrap();
+        let restored: HashChain = serde_json::from_str(&json).unwrap();
+        assert!(restored.verify(&[e1]));
     }
 }

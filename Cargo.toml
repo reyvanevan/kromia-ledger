@@ -1,7 +1,7 @@
 [package]
 name = "kromia-ledger"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["M Reyvan Purnama"]
 description = "A deterministic, immutable, and cryptographically chained financial ledger engine with double-entry bookkeeping"
 license = "MIT OR Apache-2.0"

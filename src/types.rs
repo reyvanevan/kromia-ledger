@@ -1,14 +1,48 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::fmt;
 
 use crate::validation::LedgerError;
 
-/// Fixed-point monetary value. 1.00 = 100 internal units.
+/// Fixed-point monetary value. Stored in the smallest unit of the currency.
+/// For USD (precision=2): 1.00 = 100. For IDR (precision=0): 1000 = 1000.
 pub type Balance = i128;
 
 /// Unique identifier for an account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AccountId(pub u64);
+
+impl fmt::Display for AccountId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ACC-{:04}", self.0)
+    }
+}
+
+/// Currency metadata. All accounts sharing a currency must use the same precision.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Currency {
+    /// ISO 4217 code (e.g. "USD", "IDR", "EUR").
+    pub code: String,
+    /// Number of decimal places. USD=2, IDR=0, BTC=8.
+    pub precision: u8,
+}
+
+impl Currency {
+    pub fn new(code: &str, precision: u8) -> Self {
+        Self { code: code.to_uppercase(), precision }
+    }
+
+    /// Convenience constructors for common currencies.
+    pub fn usd() -> Self { Self::new("USD", 2) }
+    pub fn idr() -> Self { Self::new("IDR", 0) }
+    pub fn eur() -> Self { Self::new("EUR", 2) }
+}
+
+impl fmt::Display for Currency {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.code)
+    }
+}
 
 /// Classification of an account within the chart of accounts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -20,13 +54,28 @@ pub enum AccountType {
     Expense,
 }
 
+impl fmt::Display for AccountType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Asset => write!(f, "Asset"),
+            Self::Liability => write!(f, "Liability"),
+            Self::Equity => write!(f, "Equity"),
+            Self::Revenue => write!(f, "Revenue"),
+            Self::Expense => write!(f, "Expense"),
+        }
+    }
+}
+
 /// A named account with a running balance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
     pub id: AccountId,
     pub name: String,
+    pub code: String,
     pub account_type: AccountType,
+    pub currency: Currency,
     pub balance: Balance,
+    pub active: bool,
 }
 
 impl Account {
@@ -60,6 +109,13 @@ impl Account {
     }
 }
 
+impl fmt::Display for Account {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let status = if self.active { "" } else { " [INACTIVE]" };
+        write!(f, "[{}] {} — {} ({}){}", self.code, self.name, self.account_type, self.currency, status)
+    }
+}
+
 /// A single debit or credit line within a transaction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionLine {
@@ -75,6 +131,9 @@ pub struct Transaction {
     pub lines: Vec<TransactionLine>,
     pub total_debit: Balance,
     pub total_credit: Balance,
+    /// External idempotency key to prevent double-processing.
+    /// If `Some`, the ledger rejects any transaction with a duplicate key.
+    pub idempotency_key: Option<String>,
 }
 
 impl Transaction {
@@ -82,6 +141,15 @@ impl Transaction {
         description: &str,
         debits: &[(AccountId, Balance)],
         credits: &[(AccountId, Balance)],
+    ) -> Result<Self, LedgerError> {
+        Self::new_with_key(description, debits, credits, None)
+    }
+
+    pub fn new_with_key(
+        description: &str,
+        debits: &[(AccountId, Balance)],
+        credits: &[(AccountId, Balance)],
+        idempotency_key: Option<&str>,
     ) -> Result<Self, LedgerError> {
         if debits.is_empty() && credits.is_empty() {
             return Err(LedgerError::EmptyTransaction);
@@ -124,6 +192,7 @@ impl Transaction {
             lines,
             total_debit,
             total_credit,
+            idempotency_key: idempotency_key.map(str::to_string),
         })
     }
 }
@@ -139,8 +208,8 @@ pub struct LedgerEntry {
 }
 
 impl LedgerEntry {
-    pub fn new(id: u64, transaction: Transaction, prev_hash: &str) -> Self {
-        let timestamp = current_timestamp();
+    /// Create a new entry with an explicit timestamp.
+    pub fn new(id: u64, transaction: Transaction, prev_hash: &str, timestamp: u64) -> Self {
         let hash = Self::compute_hash(id, &transaction, prev_hash, timestamp);
         Self {
             id,
@@ -168,6 +237,9 @@ impl LedgerEntry {
             hasher.update(line.debit.to_le_bytes());
             hasher.update(line.credit.to_le_bytes());
         }
+        if let Some(ref key) = transaction.idempotency_key {
+            hasher.update(key.as_bytes());
+        }
         hasher.update(timestamp.to_le_bytes());
         hex::encode(hasher.finalize())
     }
@@ -183,7 +255,8 @@ impl LedgerEntry {
     }
 }
 
-fn current_timestamp() -> u64 {
+/// Returns the current UNIX timestamp in seconds.
+pub(crate) fn current_timestamp() -> u64 {
     #[cfg(not(target_arch = "wasm32"))]
     {
         std::time::SystemTime::now()
