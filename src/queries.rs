@@ -61,8 +61,35 @@ impl Ledger {
     ///
     /// For single-currency ledgers, this returns exactly `0` if all transactions
     /// are balanced. For multi-currency ledgers (with exchange transactions),
-    /// this value may be non-zero — use per-currency reporting instead.
+    /// this value may be non-zero — use [`trial_balance_by_currency`](Self::trial_balance_by_currency) instead.
     pub fn trial_balance(&self) -> Balance {
         self.accounts.values().map(|a| a.signed_balance()).sum()
+    }
+
+    /// Compute the trial balance grouped by currency.
+    ///
+    /// Returns a map from currency code to the signed sum of all accounts
+    /// in that currency. Each currency should independently sum to `0`
+    /// if all transactions are balanced.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use kromia_ledger::{Ledger, AccountType, Currency};
+    ///
+    /// let mut ledger = Ledger::new();
+    /// let cash = ledger.create_account("Cash", "1000", AccountType::Asset, Currency::usd()).unwrap();
+    /// let rev  = ledger.create_account("Revenue", "4000", AccountType::Revenue, Currency::usd()).unwrap();
+    /// ledger.record_transaction("Sale", &[(cash, 500)], &[(rev, 500)]).unwrap();
+    ///
+    /// let tb = ledger.trial_balance_by_currency();
+    /// assert_eq!(tb["USD"], 0);
+    /// ```
+    pub fn trial_balance_by_currency(&self) -> std::collections::BTreeMap<String, Balance> {
+        let mut map = std::collections::BTreeMap::new();
+        for account in self.accounts.values() {
+            *map.entry(account.currency.code.clone()).or_insert(0) += account.signed_balance();
+        }
+        map
     }
 }

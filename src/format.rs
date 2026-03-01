@@ -48,6 +48,7 @@ use crate::types::Balance;
 /// assert_eq!(format_amount(100_000_001, 8), "1.00000001");
 /// ```
 pub fn format_amount(amount: Balance, precision: u8) -> String {
+    assert!(precision <= 38, "precision {precision} exceeds max 38 (u128 overflow)");
     let sign = if amount < 0 { "-" } else { "" };
     let abs = amount.unsigned_abs();
     let divisor = 10u128.pow(precision as u32);
@@ -100,6 +101,9 @@ pub fn format_amount_with_currency(amount: Balance, symbol: &str, precision: u8)
 /// assert_eq!(parse_amount("1.00000001", 8).unwrap(), 100_000_001);
 /// ```
 pub fn parse_amount(s: &str, precision: u8) -> Result<Balance, String> {
+    if precision > 38 {
+        return Err(format!("precision {precision} exceeds max 38 (u128 overflow)"));
+    }
     let s = s.trim().replace(',', "");
     let negative = s.starts_with('-');
     let s = s.trim_start_matches(['-', '+']);
