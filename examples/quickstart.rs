@@ -23,11 +23,20 @@ use kromia_ledger::{
     ReconcileStatus, RATE_SCALE,
 };
 
+// ── ANSI escape codes (zero dependencies) ──────────────────────────────
+const BOLD: &str = "\x1b[1m";
+const DIM: &str = "\x1b[2m";
+const RED: &str = "\x1b[31m";
+const GREEN: &str = "\x1b[32m";
+const YELLOW: &str = "\x1b[33m";
+const CYAN: &str = "\x1b[36m";
+const RESET: &str = "\x1b[0m";
+
 fn main() {
-    println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║            Kromia Ledger — Quickstart Demo                  ║");
-    println!("║     Double-entry · Hash-chained · Multi-currency · WASM     ║");
-    println!("╚══════════════════════════════════════════════════════════════╝");
+    println!("{CYAN}╔══════════════════════════════════════════════════════════════╗{RESET}");
+    println!("{CYAN}║{RESET}  {BOLD}          Kromia Ledger — Quickstart Demo                {RESET}{CYAN}║{RESET}");
+    println!("{CYAN}║{RESET}  {DIM}   Double-entry · Hash-chained · Multi-currency · WASM   {RESET}{CYAN}║{RESET}");
+    println!("{CYAN}╚══════════════════════════════════════════════════════════════╝{RESET}");
     println!();
 
     let mut ledger = Ledger::new();
@@ -125,23 +134,24 @@ fn main() {
                 Some(tx.key),
             )
             .unwrap();
-        println!("  ✅ {}", tx.label);
+        println!("  {GREEN}✅ {}{RESET}", tx.label);
     }
 
-    println!("  Total entries: {}", ledger.entries().len());
+    println!("  {BOLD}Total entries: {}{RESET}", ledger.entries().len());
 
     // ── 3. Cross-Currency Exchange (USD → IDR) ──────────────────────────
     print_section("3. CROSS-CURRENCY EXCHANGE (USD → IDR)");
 
-    // Rate: 1 USD cent = 157 IDR → rate = 157 * RATE_SCALE = 157_000_000
-    // $100.00 = 10_000 cents → 10_000 × 157 = 1,570,000 IDR
+    // Bank Indonesia mid-rate, 01 Mar 2026: 16,802.45 IDR/USD
+    // 1 cent = 168.0245 IDR → rate = 1_680_245 * RATE_SCALE / 10_000
+    // $100.00 = 10_000 cents → 10_000 × 168.0245 = 1,680,245 IDR
     let usd_amount: i128 = 10_000; // $100.00 in cents
-    let rate: i128 = 157 * RATE_SCALE; // 1 cent = 157 IDR
-    let idr_amount: i128 = usd_amount * rate / RATE_SCALE; // 1,570,000 IDR
+    let rate: i128 = 1_680_245 * RATE_SCALE / 10_000; // 1 cent = 168.0245 IDR
+    let idr_amount: i128 = usd_amount * rate / RATE_SCALE; // 1,680,245 IDR
 
     ledger
         .record_exchange_full(
-            "USD to IDR exchange — rate 15,700 IDR/USD",
+            "USD to IDR exchange — rate 16,802.45 IDR/USD (BI mid-rate, 01 Mar 2026)",
             bank,
             usd_amount,
             idr_account,
@@ -153,7 +163,7 @@ fn main() {
         .unwrap();
 
     println!(
-        "  ✅ Jan 28 — Exchanged {} → {} IDR (rate: 15,700 IDR/USD)",
+        "  {GREEN}✅ Jan 28 — Exchanged {} → {} IDR (rate: 16,802.45 IDR/USD){RESET}",
         format_balance_with_currency(usd_amount, "$"),
         format_idr(idr_amount),
     );
@@ -171,8 +181,8 @@ fn main() {
         (rent_exp, "$"),
     ];
 
-    println!("  {:<22} {:>10}  {:>18}", "Account", "Type", "Balance");
-    println!("  {}", "─".repeat(54));
+    println!("  {BOLD}{:<22} {:>10}  {:>18}{RESET}", "Account", "Type", "Balance");
+    println!("  {DIM}{}{RESET}", "─".repeat(54));
     for (id, sym) in &usd_accounts {
         let acc = ledger.get_account(*id).unwrap();
         println!(
@@ -197,14 +207,14 @@ fn main() {
     let valid = ledger.verify_chain();
     println!(
         "  Chain status: {} ({} entries)",
-        if valid { "✅ VERIFIED" } else { "❌ BROKEN" },
+        if valid { format!("{GREEN}✅ VERIFIED{RESET}") } else { format!("{RED}❌ BROKEN{RESET}") },
         ledger.entries().len()
     );
     if let Some(first) = ledger.entries().first() {
-        println!("  Genesis hash : {}…", &first.hash[..16]);
+        println!("  Genesis hash : {DIM}{}…{RESET}", &first.hash[..16]);
     }
     if let Some(last) = ledger.entries().last() {
-        println!("  Latest hash  : {}…", &last.hash[..16]);
+        println!("  Latest hash  : {DIM}{}…{RESET}", &last.hash[..16]);
     }
 
     // ── 6. Idempotency Protection ───────────────────────────────────────
@@ -218,21 +228,21 @@ fn main() {
         Some("CAP-001"), // same key → rejected
     );
     match dup {
-        Err(e) => println!("  ✅ Duplicate rejected: {e}"),
-        Ok(_) => println!("  ❌ BUG: duplicate was accepted!"),
+        Err(e) => println!("  {GREEN}✅ Duplicate rejected: {e}{RESET}"),
+        Ok(_) => println!("  {RED}❌ BUG: duplicate was accepted!{RESET}"),
     }
 
     // ── 7. JSON Persistence ─────────────────────────────────────────────
     print_section("7. JSON PERSISTENCE (save → load → verify)");
 
     let json = ledger.save_json().unwrap();
-    println!("  Serialized: {} bytes ({} entries)", json.len(), ledger.entries().len());
+    println!("  Serialized: {BOLD}{}{RESET} bytes ({} entries)", json.len(), ledger.entries().len());
 
     let restored = Ledger::load_json(&json).unwrap();
     println!(
         "  Restored:   {} entries, chain {}",
         restored.entries().len(),
-        if restored.verify_chain() { "✅ VERIFIED" } else { "❌ BROKEN" }
+        if restored.verify_chain() { format!("{GREEN}✅ VERIFIED{RESET}") } else { format!("{RED}❌ BROKEN{RESET}") }
     );
 
     let bal_before = ledger.get_balance(cash).unwrap();
@@ -241,7 +251,7 @@ fn main() {
         "  Cash balance: {} == {} → {}",
         format_balance_with_currency(bal_before, "$"),
         format_balance_with_currency(bal_after, "$"),
-        if bal_before == bal_after { "✅ match" } else { "❌ mismatch" }
+        if bal_before == bal_after { format!("{GREEN}✅ match{RESET}") } else { format!("{RED}❌ mismatch{RESET}") }
     );
 
     // ── 8. Tamper Detection ─────────────────────────────────────────────
@@ -249,8 +259,8 @@ fn main() {
 
     let tampered = json.replacen("Owner capital investment", "TAMPERED DESCRIPTION!", 1);
     match Ledger::load_json(&tampered) {
-        Err(e) => println!("  ✅ Tampered JSON detected: {e}"),
-        Ok(_) => println!("  ❌ BUG: tampered JSON was accepted!"),
+        Err(e) => println!("  {GREEN}✅ Tampered JSON detected:{RESET} {e}"),
+        Ok(_) => println!("  {RED}❌ BUG: tampered JSON was accepted!{RESET}"),
     }
 
     // ── 9. Reconciliation (Ledger vs Bank Statement) ────────────────────
@@ -272,20 +282,20 @@ fn main() {
 
     let results = reconcile(&internal, &external);
 
-    println!("  {:<12} {:<35}", "ID", "Status");
-    println!("  {}", "─".repeat(48));
+    println!("  {BOLD}{:<12} {:<35}{RESET}", "ID", "Status");
+    println!("  {DIM}{}{RESET}", "─".repeat(48));
     for r in &results {
         let status = match &r.status {
-            ReconcileStatus::Matched => "✅ Matched".into(),
+            ReconcileStatus::Matched => format!("{GREEN}✅ Matched{RESET}"),
             ReconcileStatus::AmountMismatch { internal, external } => {
-                format!("⚠️  Amount: {internal} vs {external}")
+                format!("{YELLOW}⚠️  Amount: {internal} vs {external}{RESET}")
             }
             ReconcileStatus::DateMismatch { internal, external } => {
-                format!("⚠️  Date: {internal} vs {external}")
+                format!("{YELLOW}⚠️  Date: {internal} vs {external}{RESET}")
             }
-            ReconcileStatus::InternalOnly => "📋 Ledger only (missing in bank)".into(),
-            ReconcileStatus::ExternalOnly => "🏦 Bank only (missing in ledger)".into(),
-            ReconcileStatus::MultipleMismatch { .. } => "⚠️  Multiple mismatches".into(),
+            ReconcileStatus::InternalOnly => format!("{YELLOW}📋 Ledger only (missing in bank){RESET}"),
+            ReconcileStatus::ExternalOnly => format!("{YELLOW}🏦 Bank only (missing in ledger){RESET}"),
+            ReconcileStatus::MultipleMismatch { .. } => format!("{YELLOW}⚠️  Multiple mismatches{RESET}"),
         };
         println!("  {:<12} {status}", r.id);
     }
@@ -293,7 +303,7 @@ fn main() {
     let matched = results.iter().filter(|r| r.status == ReconcileStatus::Matched).count();
     let anomalies = results.len() - matched;
     println!();
-    println!("  Result: {matched} matched, {anomalies} anomalies out of {} records", results.len());
+    println!("  Result: {GREEN}{matched} matched{RESET}, {YELLOW}{anomalies} anomalies{RESET} out of {} records", results.len());
 
     // ── 10. Entry History (Audit Trail) ─────────────────────────────────
     print_section("10. ENTRY HISTORY (last 3 entries)");
@@ -301,7 +311,7 @@ fn main() {
     let entries = ledger.entries();
     for entry in &entries[entries.len().saturating_sub(3)..] {
         println!(
-            "  #{:<3} │ {:<40} │ D:{:>10} C:{:>10} │ {}…",
+            "  {BOLD}#{:<3}{RESET} │ {:<40} │ D:{:>10} C:{:>10} │ {DIM}{}…{RESET}",
             entry.id,
             truncate(&entry.transaction.description, 40),
             entry.transaction.total_debit,
@@ -312,23 +322,23 @@ fn main() {
 
     // ── Done ────────────────────────────────────────────────────────────
     println!();
-    println!("╔══════════════════════════════════════════════════════════════╗");
+    println!("{CYAN}╔══════════════════════════════════════════════════════════════╗{RESET}");
     println!(
-        "║  All operations completed successfully.                      ║"
+        "{CYAN}║{RESET}  {GREEN}{BOLD}All operations completed successfully.{RESET}                      {CYAN}║{RESET}"
     );
     println!(
-        "║  {} entries · {} accounts · Chain: ✅ · Anomalies caught: ✅   ║",
+        "{CYAN}║{RESET}  {BOLD}{}{RESET} entries · {BOLD}{}{RESET} accounts · Chain: {GREEN}✅{RESET} · Anomalies caught: {GREEN}✅{RESET}   {CYAN}║{RESET}",
         ledger.entries().len(),
         ledger.accounts().count()
     );
-    println!("╚══════════════════════════════════════════════════════════════╝");
+    println!("{CYAN}╚══════════════════════════════════════════════════════════════╝{RESET}");
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 fn print_section(title: &str) {
     println!();
-    println!("── {title} ──");
+    println!("{CYAN}──{RESET} {BOLD}{title}{RESET} {CYAN}──{RESET}");
     println!();
 }
 
