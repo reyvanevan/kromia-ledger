@@ -8,7 +8,20 @@
 //! - **Cryptographic chaining**: SHA-256 hash chain ensures tamper-evident history
 //! - **Atomic transactions**: All-or-nothing mutation — no partial state corruption
 //! - **Zero floating-point**: Deterministic across native and WASM targets
+//!
+//! ## Module Structure
+//! - [`account`] — Account, AccountId, AccountType, Currency, ExchangeRate
+//! - [`transaction`] — Transaction, TransactionLine
+//! - [`entry`] — LedgerEntry, hash computation, timestamps
+//! - [`types`] — Re-export hub for all core types
+//! - [`validation`] — Error types
+//! - [`chain`] — SHA-256 hash chain
+//! - [`mod@reconcile`] — Dataset reconciliation
+//! - [`mod@format`] — Balance formatting and parsing
 
+pub mod account;
+pub mod transaction;
+pub mod entry;
 pub mod types;
 pub mod validation;
 pub mod chain;
@@ -164,7 +177,7 @@ impl Ledger {
         debits: &[(AccountId, Balance)],
         credits: &[(AccountId, Balance)],
     ) -> Result<u64, LedgerError> {
-        self.record_transaction_full(description, debits, credits, types::current_timestamp(), None)
+        self.record_transaction_full(description, debits, credits, entry::current_timestamp(), None)
     }
 
     /// Record a transaction with an explicit timestamp (deterministic).
@@ -289,7 +302,7 @@ impl Ledger {
     ) -> Result<u64, LedgerError> {
         self.record_exchange_full(
             description, from_account, from_amount, to_account, to_amount,
-            exchange_rate, types::current_timestamp(), None,
+            exchange_rate, entry::current_timestamp(), None,
         )
     }
 
@@ -377,7 +390,7 @@ impl Ledger {
         let to_currency = to_acc.currency.code.clone();
 
         // Phase 2: Build exchange metadata and validate rate math
-        let rate_meta = types::ExchangeRate {
+        let rate_meta = ExchangeRate {
             rate: exchange_rate,
             from_currency,
             to_currency,
