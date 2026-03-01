@@ -1,3 +1,11 @@
+//! WebAssembly bindings for the Kromia Ledger engine.
+//!
+//! This module provides a [`WasmLedger`] wrapper that exposes the core ledger
+//! functionality to JavaScript/TypeScript via `wasm-bindgen`. Account types
+//! are passed as integers (0–4) and transactions are submitted as JSON strings.
+//!
+//! This module is only compiled when targeting `wasm32`.
+
 use wasm_bindgen::prelude::*;
 
 use crate::types::{AccountType, Balance, Currency};

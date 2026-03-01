@@ -43,6 +43,17 @@ pub struct Ledger {
 }
 
 impl Ledger {
+    /// Create an empty ledger with a fresh hash chain.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use kromia_ledger::Ledger;
+    ///
+    /// let ledger = Ledger::new();
+    /// assert!(ledger.verify_chain());
+    /// assert_eq!(ledger.trial_balance(), 0);
+    /// ```
     pub fn new() -> Self {
         Self {
             accounts: HashMap::new(),
@@ -57,6 +68,27 @@ impl Ledger {
     // ── Account Management ──────────────────────────────────────────
 
     /// Create a new account with a unique code and an assigned currency.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` — Human-readable account name (e.g. "Cash", "Pendapatan")
+    /// * `code` — Unique chart-of-accounts code (e.g. "1000", "4100")
+    /// * `account_type` — Classification ([`AccountType`])
+    /// * `currency` — Currency metadata for this account ([`Currency`])
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LedgerError::DuplicateAccountCode`] if `code` is already in use.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use kromia_ledger::{Ledger, AccountType, Currency};
+    ///
+    /// let mut ledger = Ledger::new();
+    /// let cash = ledger.create_account("Cash", "1000", AccountType::Asset, Currency::usd()).unwrap();
+    /// assert_eq!(ledger.get_account(cash).unwrap().name, "Cash");
+    /// ```
     pub fn create_account(
         &mut self,
         name: &str,
@@ -89,18 +121,25 @@ impl Ledger {
         Ok(())
     }
 
+    /// Look up an account by its [`AccountId`]. Returns `None` if not found.
     pub fn get_account(&self, id: AccountId) -> Option<&Account> {
         self.accounts.get(&id)
     }
 
+    /// Look up an account by its chart-of-accounts code (e.g. `"1000"`).
+    /// Returns `None` if no account has that code.
     pub fn account_by_code(&self, code: &str) -> Option<&Account> {
         self.accounts.values().find(|a| a.code == code)
     }
 
+    /// Get the current balance of an account. Returns `None` if the account doesn't exist.
+    ///
+    /// The balance is in the smallest currency unit (e.g. cents for USD).
     pub fn get_balance(&self, id: AccountId) -> Option<Balance> {
         self.accounts.get(&id).map(|a| a.balance)
     }
 
+    /// Iterate over all accounts in the ledger.
     pub fn accounts(&self) -> impl Iterator<Item = &Account> {
         self.accounts.values()
     }
@@ -108,6 +147,17 @@ impl Ledger {
     // ── Transaction Recording (Atomic) ──────────────────────────────
 
     /// Record a transaction using the system clock as timestamp.
+    ///
+    /// This is the simplest way to record a transaction. For deterministic
+    /// timestamps or idempotency keys, use [`record_transaction_at`](Self::record_transaction_at)
+    /// or [`record_transaction_full`](Self::record_transaction_full).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LedgerError::Unbalanced`] if debits ≠ credits,
+    /// [`LedgerError::AccountNotFound`] if any account ID is invalid,
+    /// [`LedgerError::InactiveAccount`] if any account is deactivated, or
+    /// [`LedgerError::CurrencyMismatch`] if accounts have different currencies.
     pub fn record_transaction(
         &mut self,
         description: &str,
@@ -118,6 +168,13 @@ impl Ledger {
     }
 
     /// Record a transaction with an explicit timestamp (deterministic).
+    ///
+    /// Use this for reproducible tests or when the timestamp comes from an external source.
+    /// Two ledgers that record the same data at the same timestamp produce identical hashes.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`record_transaction`](Self::record_transaction).
     pub fn record_transaction_at(
         &mut self,
         description: &str,
@@ -128,11 +185,32 @@ impl Ledger {
         self.record_transaction_full(description, debits, credits, timestamp, None)
     }
 
-    /// Record a transaction with explicit timestamp and idempotency key.
+    /// Record a transaction with explicit timestamp and optional idempotency key.
     ///
-    /// This method is **atomic**: if any validation fails (unbalanced amounts,
-    /// missing accounts, inactive accounts, currency mismatch, duplicate key),
-    /// the ledger state is unchanged.
+    /// This is the full-control method. It is **atomic**: if any validation
+    /// fails (unbalanced amounts, missing accounts, inactive accounts,
+    /// currency mismatch, duplicate idempotency key), the ledger state
+    /// remains completely unchanged.
+    ///
+    /// # Arguments
+    ///
+    /// * `description` — Human-readable description of the transaction
+    /// * `debits` — Slice of `(AccountId, amount)` pairs for the debit side
+    /// * `credits` — Slice of `(AccountId, amount)` pairs for the credit side
+    /// * `timestamp` — UNIX timestamp in seconds
+    /// * `idempotency_key` — Optional external key to prevent double-processing
+    ///
+    /// # Errors
+    ///
+    /// | Error | Cause |
+    /// |---|---|
+    /// | [`LedgerError::DuplicateIdempotencyKey`] | Key was already used |
+    /// | [`LedgerError::Unbalanced`] | Total debits ≠ total credits |
+    /// | [`LedgerError::EmptyTransaction`] | No debit or credit lines |
+    /// | [`LedgerError::InvalidAmount`] | Any amount ≤ 0 |
+    /// | [`LedgerError::AccountNotFound`] | Unknown account ID |
+    /// | [`LedgerError::InactiveAccount`] | Deactivated account |
+    /// | [`LedgerError::CurrencyMismatch`] | Accounts use different currencies |
     pub fn record_transaction_full(
         &mut self,
         description: &str,
@@ -198,10 +276,12 @@ impl Ledger {
 
     // ── Queries ─────────────────────────────────────────────────────
 
+    /// Returns a slice of all ledger entries in chronological order.
     pub fn entries(&self) -> &[LedgerEntry] {
         &self.entries
     }
 
+    /// Find a single entry by its numeric ID. Returns `None` if not found.
     pub fn find_entry(&self, id: u64) -> Option<&LedgerEntry> {
         self.entries.iter().find(|e| e.id == id)
     }
@@ -222,24 +302,47 @@ impl Ledger {
 
     // ── Integrity ───────────────────────────────────────────────────
 
+    /// Verify the integrity of the entire hash chain.
+    ///
+    /// Returns `true` if every entry's hash is consistent with its content
+    /// and its predecessor. Returns `false` if any entry has been tampered with.
     pub fn verify_chain(&self) -> bool {
         self.chain.verify(&self.entries)
     }
 
-    /// Trial balance: must be 0 if all transactions are balanced.
+    /// Compute the trial balance across all accounts.
+    ///
+    /// If all transactions are properly balanced, this returns exactly `0`.
+    /// A non-zero result indicates a bug (should never happen with validated transactions).
     pub fn trial_balance(&self) -> Balance {
         self.accounts.values().map(|a| a.signed_balance()).sum()
     }
 
     // ── Persistence ─────────────────────────────────────────────────
 
-    /// Serialize the entire ledger to a JSON string.
+    /// Serialize the entire ledger to a pretty-printed JSON string.
+    ///
+    /// The output includes all accounts, entries, and the hash chain.
+    /// Use [`load_json`](Self::load_json) to restore.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LedgerError::Serialization`] if serialization fails.
     pub fn save_json(&self) -> Result<String, LedgerError> {
         serde_json::to_string_pretty(self)
             .map_err(|e| LedgerError::Serialization(e.to_string()))
     }
 
-    /// Restore a ledger from a JSON string and verify chain integrity.
+    /// Restore a ledger from a JSON string with automatic chain verification.
+    ///
+    /// This method verifies the hash chain immediately after deserialization.
+    /// If the chain is broken (any entry was tampered with), it returns an error.
+    /// Idempotency keys are automatically rebuilt from the loaded entries.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LedgerError::Serialization`] if JSON parsing fails, or
+    /// [`LedgerError::ChainBroken`] if the hash chain is invalid.
     pub fn load_json(json: &str) -> Result<Self, LedgerError> {
         let mut ledger: Self = serde_json::from_str(json)
             .map_err(|e| LedgerError::Serialization(e.to_string()))?;

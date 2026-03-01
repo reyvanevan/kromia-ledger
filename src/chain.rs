@@ -1,8 +1,18 @@
+//! SHA-256 hash chain for tamper-evident ledger integrity.
+//!
+//! The [`HashChain`] maintains an ordered list of hashes — one per ledger entry,
+//! plus a genesis hash (64 zero bytes). Each entry's hash is computed from its
+//! content **and** the previous hash, forming an unbreakable chain. If any
+//! historical entry is modified, every subsequent hash becomes invalid.
+//!
+//! This is the same principle behind blockchain, applied to a financial ledger.
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::types::LedgerEntry;
 
+/// The genesis hash — 64 hex zeros. This anchors the very first entry in the chain.
 const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
 /// Manages the SHA-256 hash chain for ledger entries.
@@ -12,16 +22,19 @@ pub struct HashChain {
 }
 
 impl HashChain {
+    /// Create a new hash chain seeded with the genesis hash.
     pub fn new() -> Self {
         Self {
             hashes: vec![GENESIS_HASH.to_string()],
         }
     }
 
+    /// Returns the most recent hash in the chain (used as `prev_hash` for the next entry).
     pub fn last_hash(&self) -> String {
         self.hashes.last().cloned().unwrap_or_else(|| GENESIS_HASH.to_string())
     }
 
+    /// Append a ledger entry's hash to the chain.
     pub fn append(&mut self, entry: &LedgerEntry) {
         self.hashes.push(entry.hash.clone());
     }
@@ -52,16 +65,19 @@ impl HashChain {
         true
     }
 
+    /// Compute a standalone SHA-256 hash of arbitrary data, returned as a hex string.
     pub fn sha256(data: &[u8]) -> String {
         let mut hasher = Sha256::new();
         hasher.update(data);
         hex::encode(hasher.finalize())
     }
 
+    /// Returns the number of entries in the chain (excludes the genesis hash).
     pub fn len(&self) -> usize {
         self.hashes.len().saturating_sub(1)
     }
 
+    /// Returns `true` if no entries have been appended to the chain.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

@@ -1,7 +1,19 @@
+//! Error types for the Kromia Ledger engine.
+//!
+//! All validation failures are expressed through [`LedgerError`], which implements
+//! both [`std::error::Error`] and [`std::fmt::Display`] via the `thiserror` crate.
+//! Every error variant is designed to be actionable — the caller can match on it
+//! and present a meaningful message to the end user.
+
 use thiserror::Error;
 
 use crate::types::Balance;
 
+/// All errors that can occur when interacting with the ledger.
+///
+/// These errors are returned from account creation, transaction recording,
+/// chain verification, and persistence operations. They are non-exhaustive
+/// to allow future extension.
 #[derive(Debug, Error)]
 pub enum LedgerError {
     #[error("transaction is unbalanced: debit={debit}, credit={credit}")]

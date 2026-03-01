@@ -1,3 +1,15 @@
+//! Core types for the Kromia Ledger engine.
+//!
+//! This module defines the fundamental data structures:
+//!
+//! - [`Balance`] — fixed-point i128 monetary value (no floating point)
+//! - [`AccountId`] — unique account identifier
+//! - [`Currency`] — ISO 4217 currency metadata with decimal precision
+//! - [`AccountType`] — chart-of-accounts classification
+//! - [`Account`] — a named account with a running balance
+//! - [`Transaction`] — a balanced set of debit/credit lines
+//! - [`LedgerEntry`] — an immutable, hash-chained record in the ledger
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -28,13 +40,28 @@ pub struct Currency {
 }
 
 impl Currency {
+    /// Create a new currency with an ISO 4217 code and decimal precision.
+    ///
+    /// The code is automatically uppercased.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use kromia_ledger::Currency;
+    ///
+    /// let btc = Currency::new("BTC", 8);
+    /// assert_eq!(btc.code, "BTC");
+    /// assert_eq!(btc.precision, 8);
+    /// ```
     pub fn new(code: &str, precision: u8) -> Self {
         Self { code: code.to_uppercase(), precision }
     }
 
-    /// Convenience constructors for common currencies.
+    /// US Dollar (precision = 2).
     pub fn usd() -> Self { Self::new("USD", 2) }
+    /// Indonesian Rupiah (precision = 0).
     pub fn idr() -> Self { Self::new("IDR", 0) }
+    /// Euro (precision = 2).
     pub fn eur() -> Self { Self::new("EUR", 2) }
 }
 
@@ -45,12 +72,21 @@ impl fmt::Display for Currency {
 }
 
 /// Classification of an account within the chart of accounts.
+///
+/// The account type determines debit/credit behavior:
+/// - **Debit-normal** (increase on debit): [`Asset`](Self::Asset), [`Expense`](Self::Expense)
+/// - **Credit-normal** (increase on credit): [`Liability`](Self::Liability), [`Equity`](Self::Equity), [`Revenue`](Self::Revenue)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AccountType {
+    /// Debit-normal. Resources owned (cash, receivables, equipment).
     Asset,
+    /// Credit-normal. Obligations owed (payables, loans).
     Liability,
+    /// Credit-normal. Owner's residual interest (capital, retained earnings).
     Equity,
+    /// Credit-normal. Income earned (sales, interest income).
     Revenue,
+    /// Debit-normal. Costs incurred (rent, salaries, utilities).
     Expense,
 }
 
@@ -137,6 +173,13 @@ pub struct Transaction {
 }
 
 impl Transaction {
+    /// Create a balanced transaction without an idempotency key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LedgerError::EmptyTransaction`] if both sides are empty,
+    /// [`LedgerError::InvalidAmount`] if any amount ≤ 0, or
+    /// [`LedgerError::Unbalanced`] if total debits ≠ total credits.
     pub fn new(
         description: &str,
         debits: &[(AccountId, Balance)],
@@ -145,6 +188,14 @@ impl Transaction {
         Self::new_with_key(description, debits, credits, None)
     }
 
+    /// Create a balanced transaction with an optional idempotency key.
+    ///
+    /// The idempotency key is included in the SHA-256 hash computation,
+    /// making it part of the tamper-evident record.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Transaction::new`].
     pub fn new_with_key(
         description: &str,
         debits: &[(AccountId, Balance)],
@@ -220,6 +271,11 @@ impl LedgerEntry {
         }
     }
 
+    /// Compute the SHA-256 hash for an entry given its components.
+    ///
+    /// The hash includes: entry ID, previous hash, description, totals,
+    /// all transaction lines, the idempotency key (if present), and the timestamp.
+    /// This deterministic computation enables chain verification.
     pub fn compute_hash(
         id: u64,
         transaction: &Transaction,
@@ -244,6 +300,9 @@ impl LedgerEntry {
         hex::encode(hasher.finalize())
     }
 
+    /// Verify that this entry's stored hash matches a fresh computation.
+    ///
+    /// Returns `false` if any field has been tampered with since creation.
     pub fn verify(&self) -> bool {
         let expected = Self::compute_hash(
             self.id,

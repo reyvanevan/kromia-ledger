@@ -1,6 +1,34 @@
+//! Human-readable balance formatting and parsing.
+//!
+//! Converts fixed-point [`Balance`] values (i128) to formatted strings like
+//! `"1,234.56"` and back. All functions assume 2-decimal precision.
+//!
+//! # Example
+//!
+//! ```
+//! use kromia_ledger::format::{format_balance, parse_balance};
+//!
+//! assert_eq!(format_balance(1_234_56), "1,234.56");
+//! assert_eq!(parse_balance("1,234.56").unwrap(), 1_234_56);
+//! ```
+
 use crate::types::Balance;
 
 /// Format a fixed-point balance with thousands separators.
+///
+/// The input is in the smallest currency unit (cents for USD).
+/// Output uses 2 decimal places with comma-separated thousands.
+///
+/// # Examples
+///
+/// ```
+/// use kromia_ledger::format_balance;
+///
+/// assert_eq!(format_balance(0), "0.00");
+/// assert_eq!(format_balance(150_00), "150.00");
+/// assert_eq!(format_balance(1_234_567_89), "1,234,567.89");
+/// assert_eq!(format_balance(-42_50), "-42.50");
+/// ```
 pub fn format_balance(amount: Balance) -> String {
     let sign = if amount < 0 { "-" } else { "" };
     let abs = amount.unsigned_abs();
@@ -20,12 +48,39 @@ pub fn format_balance(amount: Balance) -> String {
 }
 
 /// Format a balance with a currency symbol prefix.
+///
+/// # Examples
+///
+/// ```
+/// use kromia_ledger::format_balance_with_currency;
+///
+/// assert_eq!(format_balance_with_currency(250_00, "$"), "$250.00");
+/// assert_eq!(format_balance_with_currency(1_500_000_00, "Rp"), "Rp1,500,000.00");
+/// ```
 pub fn format_balance_with_currency(amount: Balance, symbol: &str) -> String {
     format!("{symbol}{}", format_balance(amount))
 }
 
-/// Parse a human-readable balance string into fixed-point.
-/// Accepts: "1234.56", "1,234.56", "-42.50", "100".
+/// Parse a human-readable balance string into a fixed-point [`Balance`].
+///
+/// Accepts formats: `"1234.56"`, `"1,234.56"`, `"-42.50"`, `"100"`.
+/// Commas are stripped before parsing. Negative values use a leading `-`.
+///
+/// # Errors
+///
+/// Returns `Err(String)` if the input is empty, contains non-numeric characters,
+/// or has more than one decimal point.
+///
+/// # Examples
+///
+/// ```
+/// use kromia_ledger::parse_balance;
+///
+/// assert_eq!(parse_balance("100").unwrap(), 100_00);
+/// assert_eq!(parse_balance("1,234.56").unwrap(), 1_234_56);
+/// assert_eq!(parse_balance("-42.50").unwrap(), -42_50);
+/// assert!(parse_balance("abc").is_err());
+/// ```
 pub fn parse_balance(s: &str) -> Result<Balance, String> {
     let s = s.trim().replace(',', "");
     let negative = s.starts_with('-');

@@ -1,3 +1,25 @@
+//! O(n + m) dataset reconciliation engine.
+//!
+//! Compares an internal dataset against an external dataset (e.g. bank statement
+//! vs general ledger) by matching on record IDs. The output classifies each
+//! record as [`Matched`](ReconcileStatus::Matched),
+//! [`AmountMismatch`](ReconcileStatus::AmountMismatch),
+//! [`DateMismatch`](ReconcileStatus::DateMismatch),
+//! [`InternalOnly`](ReconcileStatus::InternalOnly), or
+//! [`ExternalOnly`](ReconcileStatus::ExternalOnly).
+//!
+//! # Example
+//!
+//! ```
+//! use kromia_ledger::reconcile::{reconcile, ReconcileRecord, ReconcileStatus};
+//!
+//! let internal = vec![ReconcileRecord { id: "TX001".into(), amount: 10000, date: "2026-01-15".into() }];
+//! let external = vec![ReconcileRecord { id: "TX001".into(), amount: 10000, date: "2026-01-15".into() }];
+//!
+//! let results = reconcile(&internal, &external);
+//! assert_eq!(results[0].status, ReconcileStatus::Matched);
+//! ```
+
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
