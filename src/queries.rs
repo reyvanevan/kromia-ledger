@@ -47,6 +47,16 @@ impl Ledger {
             .collect()
     }
 
+    /// Returns all entries recorded by a specific actor.
+    ///
+    /// Only matches entries that carry [`AuditMeta`](crate::AuditMeta).
+    /// Entries recorded without audit metadata are excluded from results.
+    pub fn entries_by_actor(&self, actor: &str) -> Vec<&LedgerEntry> {
+        self.entries.iter()
+            .filter(|e| e.audit.as_ref().is_some_and(|a| a.actor == actor))
+            .collect()
+    }
+
     // ── Integrity ───────────────────────────────────────────────────
 
     /// Verify the integrity of the entire hash chain.

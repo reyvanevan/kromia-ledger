@@ -174,6 +174,7 @@ impl Transaction {
 
 // ── Ledger transaction recording ─────────────────────────────────────
 
+use crate::audit::AuditMeta;
 use crate::entry::{self, LedgerEntry};
 use crate::Ledger;
 
@@ -251,6 +252,40 @@ impl Ledger {
         timestamp: u64,
         idempotency_key: Option<&str>,
     ) -> Result<u64, LedgerError> {
+        self.record_transaction_impl(description, debits, credits, timestamp, idempotency_key, None)
+    }
+
+    /// Record a transaction with explicit timestamp, optional idempotency key,
+    /// and audit trail metadata.
+    ///
+    /// This extends [`record_transaction_full`](Self::record_transaction_full) with
+    /// an [`AuditMeta`] that records who performed the action and from where.
+    /// The audit metadata is included in the SHA-256 hash, making it tamper-evident.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`record_transaction_full`](Self::record_transaction_full).
+    pub fn record_transaction_audited(
+        &mut self,
+        description: &str,
+        debits: &[(AccountId, Balance)],
+        credits: &[(AccountId, Balance)],
+        timestamp: u64,
+        idempotency_key: Option<&str>,
+        audit: AuditMeta,
+    ) -> Result<u64, LedgerError> {
+        self.record_transaction_impl(description, debits, credits, timestamp, idempotency_key, Some(audit))
+    }
+
+    fn record_transaction_impl(
+        &mut self,
+        description: &str,
+        debits: &[(AccountId, Balance)],
+        credits: &[(AccountId, Balance)],
+        timestamp: u64,
+        idempotency_key: Option<&str>,
+        audit: Option<AuditMeta>,
+    ) -> Result<u64, LedgerError> {
         // Phase 0: Check idempotency key uniqueness
         if let Some(key) = idempotency_key
             && self.idempotency_keys.contains(key)
@@ -292,7 +327,7 @@ impl Ledger {
         let entry_id = self.next_entry_id;
         self.next_entry_id += 1;
 
-        let entry = LedgerEntry::new(entry_id, transaction, &prev_hash, timestamp);
+        let entry = LedgerEntry::new(entry_id, transaction, &prev_hash, timestamp, audit);
         self.chain.append(&entry);
 
         for &(account_id, amount) in debits {

@@ -123,7 +123,7 @@ mod tests {
             &[(AccountId(1), 100)],
             &[(AccountId(2), 100)],
         ).unwrap();
-        LedgerEntry::new(id, tx, prev_hash, 1_000_000 + id)
+        LedgerEntry::new(id, tx, prev_hash, 1_000_000 + id, None)
     }
 
     #[test]

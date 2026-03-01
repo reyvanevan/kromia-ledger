@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::audit::AuditMeta;
 use crate::transaction::Transaction;
 
 /// An immutable, hash-chained ledger entry.
@@ -16,18 +17,22 @@ pub struct LedgerEntry {
     pub prev_hash: String,
     pub hash: String,
     pub timestamp: u64,
+    /// Audit trail metadata (who performed the action and from where).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audit: Option<AuditMeta>,
 }
 
 impl LedgerEntry {
-    /// Create a new entry with an explicit timestamp.
-    pub fn new(id: u64, transaction: Transaction, prev_hash: &str, timestamp: u64) -> Self {
-        let hash = Self::compute_hash(id, &transaction, prev_hash, timestamp);
+    /// Create a new entry with an explicit timestamp and optional audit metadata.
+    pub fn new(id: u64, transaction: Transaction, prev_hash: &str, timestamp: u64, audit: Option<AuditMeta>) -> Self {
+        let hash = Self::compute_hash(id, &transaction, prev_hash, timestamp, audit.as_ref());
         Self {
             id,
             transaction,
             prev_hash: prev_hash.to_string(),
             hash,
             timestamp,
+            audit,
         }
     }
 
@@ -41,6 +46,7 @@ impl LedgerEntry {
         transaction: &Transaction,
         prev_hash: &str,
         timestamp: u64,
+        audit: Option<&AuditMeta>,
     ) -> String {
         let mut hasher = Sha256::new();
         hasher.update(id.to_le_bytes());
@@ -61,6 +67,15 @@ impl LedgerEntry {
             hasher.update(xr.from_currency.as_bytes());
             hasher.update(xr.to_currency.as_bytes());
         }
+        if let Some(audit) = audit {
+            hasher.update(audit.actor.as_bytes());
+            if let Some(ref source) = audit.source {
+                hasher.update(source.as_bytes());
+            }
+            if let Some(ref notes) = audit.notes {
+                hasher.update(notes.as_bytes());
+            }
+        }
         hasher.update(timestamp.to_le_bytes());
         hex::encode(hasher.finalize())
     }
@@ -74,6 +89,7 @@ impl LedgerEntry {
             &self.transaction,
             &self.prev_hash,
             self.timestamp,
+            self.audit.as_ref(),
         );
         self.hash == expected
     }

@@ -12,6 +12,7 @@
 //!
 //! ## Module Structure
 //! - [`account`] — Account, AccountId, AccountType, Currency, ExchangeRate, balance logic
+//! - [`audit`] — Audit trail metadata (actor, source, notes)
 //! - [`transaction`] — Transaction, TransactionLine, recording methods
 //! - [`entry`] — LedgerEntry, hash computation, timestamps
 //! - [`exchange`] — Cross-currency exchange recording
@@ -24,6 +25,7 @@
 //! - [`mod@format`] — Balance formatting and parsing
 
 pub mod account;
+pub mod audit;
 pub mod transaction;
 pub mod entry;
 pub mod exchange;
@@ -41,6 +43,7 @@ pub mod wasm;
 pub use types::{AccountId, AccountType, Balance, Currency, ExchangeRate, LedgerEntry, Transaction, Account, RATE_SCALE};
 pub use validation::LedgerError;
 pub use chain::HashChain;
+pub use audit::AuditMeta;
 pub use reconcile::{ReconcileRecord, ReconcileResult, ReconcileStatus, reconcile};
 pub use format::{format_balance, format_balance_with_currency, parse_balance, format_amount, format_amount_with_currency, parse_amount};
 
@@ -57,7 +60,8 @@ use std::collections::{BTreeMap, HashSet};
 /// - **Account management**: [`create_account`](Self::create_account), [`deactivate_account`](Self::deactivate_account), [`get_account`](Self::get_account), [`account_by_code`](Self::account_by_code), [`get_balance`](Self::get_balance), [`accounts`](Self::accounts) — in [`account`]
 /// - **Transaction recording**: [`record_transaction`](Self::record_transaction), [`record_transaction_at`](Self::record_transaction_at), [`record_transaction_full`](Self::record_transaction_full) — in [`transaction`]
 /// - **Currency exchange**: [`record_exchange`](Self::record_exchange), [`record_exchange_at`](Self::record_exchange_at), [`record_exchange_full`](Self::record_exchange_full) — in [`exchange`]
-/// - **Queries**: [`entries`](Self::entries), [`find_entry`](Self::find_entry), [`entries_for_account`](Self::entries_for_account), [`entries_in_range`](Self::entries_in_range), [`verify_chain`](Self::verify_chain), [`trial_balance`](Self::trial_balance) — in [`queries`]
+/// - **Queries**: [`entries`](Self::entries), [`find_entry`](Self::find_entry), [`entries_for_account`](Self::entries_for_account), [`entries_in_range`](Self::entries_in_range), [`entries_by_actor`](Self::entries_by_actor), [`verify_chain`](Self::verify_chain), [`trial_balance`](Self::trial_balance), [`trial_balance_by_currency`](Self::trial_balance_by_currency) — in [`queries`]
+/// - **Audit trail**: [`record_transaction_audited`](Self::record_transaction_audited), [`record_exchange_audited`](Self::record_exchange_audited) — in [`transaction`], [`exchange`]
 /// - **Persistence**: [`save_json`](Self::save_json), [`load_json`](Self::load_json) — in [`persistence`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ledger {

@@ -57,7 +57,8 @@ impl WasmLedger {
     /// Record a transaction via JSON.
     /// JSON format: { "description": "...", "debits": [[id, amount], ...],
     ///   "credits": [[id, amount], ...], "timestamp": 123 (optional),
-    ///   "idempotency_key": "ORDER-001" (optional) }
+    ///   "idempotency_key": "ORDER-001" (optional),
+    ///   "audit": { "actor": "...", "source": "..." (optional), "notes": "..." (optional) } (optional) }
     pub fn record_transaction(&mut self, json: &str) -> Result<u64, JsValue> {
         let v: serde_json::Value = serde_json::from_str(json)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -69,14 +70,21 @@ impl WasmLedger {
         let idempotency_key = v["idempotency_key"].as_str();
 
         let ts = timestamp.unwrap_or_else(crate::types::current_timestamp);
-        self.inner.record_transaction_full(description, &debits, &credits, ts, idempotency_key)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+        match parse_audit(&v["audit"]) {
+            Some(audit) => self.inner.record_transaction_audited(
+                description, &debits, &credits, ts, idempotency_key, audit,
+            ),
+            None => self.inner.record_transaction_full(
+                description, &debits, &credits, ts, idempotency_key,
+            ),
+        }.map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Record a cross-currency exchange via JSON.
     /// JSON format: { "description": "...", "from_account": id, "from_amount": amount,
     ///   "to_account": id, "to_amount": amount, "exchange_rate": rate,
-    ///   "timestamp": 123 (optional), "idempotency_key": "XCH-001" (optional) }
+    ///   "timestamp": 123 (optional), "idempotency_key": "XCH-001" (optional),
+    ///   "audit": { "actor": "...", ... } (optional) }
     pub fn record_exchange(&mut self, json: &str) -> Result<u64, JsValue> {
         let v: serde_json::Value = serde_json::from_str(json)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -96,12 +104,20 @@ impl WasmLedger {
         let idempotency_key = v["idempotency_key"].as_str();
 
         let ts = timestamp.unwrap_or_else(crate::types::current_timestamp);
-        self.inner.record_exchange_full(
-            description,
-            crate::types::AccountId(from_account), from_amount,
-            crate::types::AccountId(to_account), to_amount,
-            exchange_rate, ts, idempotency_key,
-        ).map_err(|e| JsValue::from_str(&e.to_string()))
+        match parse_audit(&v["audit"]) {
+            Some(audit) => self.inner.record_exchange_audited(
+                description,
+                crate::types::AccountId(from_account), from_amount,
+                crate::types::AccountId(to_account), to_amount,
+                exchange_rate, ts, idempotency_key, audit,
+            ),
+            None => self.inner.record_exchange_full(
+                description,
+                crate::types::AccountId(from_account), from_amount,
+                crate::types::AccountId(to_account), to_amount,
+                exchange_rate, ts, idempotency_key,
+            ),
+        }.map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     pub fn verify_chain(&self) -> bool { self.inner.verify_chain() }
@@ -157,6 +173,18 @@ fn parse_lines(value: &serde_json::Value) -> Result<Vec<(crate::types::AccountId
         lines.push((crate::types::AccountId(id), amount));
     }
     Ok(lines)
+}
+
+fn parse_audit(value: &serde_json::Value) -> Option<crate::audit::AuditMeta> {
+    let actor = value.get("actor")?.as_str()?;
+    let mut audit = crate::audit::AuditMeta::new(actor);
+    if let Some(source) = value.get("source").and_then(|v| v.as_str()) {
+        audit = audit.with_source(source);
+    }
+    if let Some(notes) = value.get("notes").and_then(|v| v.as_str()) {
+        audit = audit.with_notes(notes);
+    }
+    Some(audit)
 }
 
 impl Default for WasmLedger {

@@ -4,6 +4,7 @@
 //! multi-currency exchange transactions using scaled integer arithmetic.
 
 use crate::account::{AccountId, Balance, ExchangeRate};
+use crate::audit::AuditMeta;
 use crate::entry::{self, LedgerEntry};
 use crate::transaction::Transaction;
 use crate::validation::LedgerError;
@@ -91,6 +92,53 @@ impl Ledger {
         timestamp: u64,
         idempotency_key: Option<&str>,
     ) -> Result<u64, LedgerError> {
+        self.record_exchange_impl(
+            description, from_account, from_amount, to_account, to_amount,
+            exchange_rate, timestamp, idempotency_key, None,
+        )
+    }
+
+    /// Record a cross-currency exchange with audit trail metadata.
+    ///
+    /// This extends [`record_exchange_full`](Self::record_exchange_full) with
+    /// an [`AuditMeta`] recording who performed the exchange and from where.
+    /// The audit metadata is included in the SHA-256 hash, making it tamper-evident.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`record_exchange_full`](Self::record_exchange_full).
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_exchange_audited(
+        &mut self,
+        description: &str,
+        from_account: AccountId,
+        from_amount: Balance,
+        to_account: AccountId,
+        to_amount: Balance,
+        exchange_rate: Balance,
+        timestamp: u64,
+        idempotency_key: Option<&str>,
+        audit: AuditMeta,
+    ) -> Result<u64, LedgerError> {
+        self.record_exchange_impl(
+            description, from_account, from_amount, to_account, to_amount,
+            exchange_rate, timestamp, idempotency_key, Some(audit),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record_exchange_impl(
+        &mut self,
+        description: &str,
+        from_account: AccountId,
+        from_amount: Balance,
+        to_account: AccountId,
+        to_amount: Balance,
+        exchange_rate: Balance,
+        timestamp: u64,
+        idempotency_key: Option<&str>,
+        audit: Option<AuditMeta>,
+    ) -> Result<u64, LedgerError> {
         // Phase 0: Idempotency check
         if let Some(key) = idempotency_key
             && self.idempotency_keys.contains(key)
@@ -133,7 +181,7 @@ impl Ledger {
         let entry_id = self.next_entry_id;
         self.next_entry_id += 1;
 
-        let entry = LedgerEntry::new(entry_id, transaction, &prev_hash, timestamp);
+        let entry = LedgerEntry::new(entry_id, transaction, &prev_hash, timestamp, audit);
         self.chain.append(&entry);
 
         self.accounts.get_mut(&from_account).unwrap().apply_credit(from_amount);
