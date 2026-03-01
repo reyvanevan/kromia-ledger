@@ -23,6 +23,13 @@ js-sys = "0.3"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
+criterion = { version = "0.5", features = ["html_reports"] }
+rand = "0.9"
+rand_chacha = "0.9"
+
+[[bench]]
+name = "performance"
+harness = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]
