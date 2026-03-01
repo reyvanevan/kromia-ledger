@@ -142,10 +142,10 @@ impl Ledger {
         idempotency_key: Option<&str>,
     ) -> Result<u64, LedgerError> {
         // Phase 0: Check idempotency key uniqueness
-        if let Some(key) = idempotency_key {
-            if self.idempotency_keys.contains(key) {
-                return Err(LedgerError::DuplicateIdempotencyKey(key.to_string()));
-            }
+        if let Some(key) = idempotency_key
+            && self.idempotency_keys.contains(key)
+        {
+            return Err(LedgerError::DuplicateIdempotencyKey(key.to_string()));
         }
 
         // Phase 1: Validate transaction balance
