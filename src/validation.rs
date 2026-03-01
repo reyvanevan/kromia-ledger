@@ -44,6 +44,12 @@ pub enum LedgerError {
     #[error("duplicate idempotency key: {0}")]
     DuplicateIdempotencyKey(String),
 
+    #[error("exchange rate mismatch: expected to_amount={expected}, got {actual}")]
+    ExchangeRateMismatch { expected: Balance, actual: Balance },
+
+    #[error("invalid exchange rate: {0} (must be positive)")]
+    InvalidExchangeRate(Balance),
+
     #[error("chain integrity violation at entry {0}")]
     ChainBroken(u64),
 

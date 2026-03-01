@@ -3,8 +3,10 @@
 //! This module defines the fundamental data structures:
 //!
 //! - [`Balance`] — fixed-point i128 monetary value (no floating point)
+//! - [`RATE_SCALE`] — scale factor for exchange rate integer arithmetic
 //! - [`AccountId`] — unique account identifier
 //! - [`Currency`] — ISO 4217 currency metadata with decimal precision
+//! - [`ExchangeRate`] — cross-currency exchange rate metadata
 //! - [`AccountType`] — chart-of-accounts classification
 //! - [`Account`] — a named account with a running balance
 //! - [`Transaction`] — a balanced set of debit/credit lines
@@ -19,6 +21,20 @@ use crate::validation::LedgerError;
 /// Fixed-point monetary value. Stored in the smallest unit of the currency.
 /// For USD (precision=2): 1.00 = 100. For IDR (precision=0): 1000 = 1000.
 pub type Balance = i128;
+
+/// Scale factor for exchange rates (10⁶ = 6 decimal places of precision).
+///
+/// Exchange rates are stored as `rate × RATE_SCALE` to avoid floating-point math.
+///
+/// # Formula
+///
+/// `to_amount = from_amount × exchange_rate / RATE_SCALE`
+///
+/// # Example
+///
+/// 1 USD = 15,700 IDR. In smallest units: 1 cent = 157 IDR.
+/// Rate = `157 × 1_000_000 = 157_000_000`.
+pub const RATE_SCALE: i128 = 1_000_000;
 
 /// Unique identifier for an account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -69,6 +85,26 @@ impl fmt::Display for Currency {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.code)
     }
+}
+
+/// Exchange rate metadata for cross-currency transactions.
+///
+/// Stored in the hash chain as part of the tamper-evident record.
+/// The `rate` field uses scaled integer arithmetic — see [`RATE_SCALE`].
+///
+/// # Formula
+///
+/// `to_amount = from_amount × rate / RATE_SCALE`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExchangeRate {
+    /// The exchange rate, scaled by [`RATE_SCALE`].
+    ///
+    /// Example: 1 USD cent = 157 IDR → `rate = 157 × RATE_SCALE = 157_000_000`.
+    pub rate: Balance,
+    /// Source currency code (e.g. "USD").
+    pub from_currency: String,
+    /// Target currency code (e.g. "IDR").
+    pub to_currency: String,
 }
 
 /// Classification of an account within the chart of accounts.
@@ -170,6 +206,10 @@ pub struct Transaction {
     /// External idempotency key to prevent double-processing.
     /// If `Some`, the ledger rejects any transaction with a duplicate key.
     pub idempotency_key: Option<String>,
+    /// Exchange rate metadata for cross-currency transactions.
+    /// Present only on entries created via [`crate::Ledger::record_exchange_full`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exchange_rate: Option<ExchangeRate>,
 }
 
 impl Transaction {
@@ -244,6 +284,70 @@ impl Transaction {
             total_debit,
             total_credit,
             idempotency_key: idempotency_key.map(str::to_string),
+            exchange_rate: None,
+        })
+    }
+
+    /// Create a cross-currency exchange transaction.
+    ///
+    /// Unlike [`Transaction::new`], this does **not** require total debits = total credits
+    /// (the amounts are in different currencies). Instead, it validates that
+    /// `to_amount ≈ from_amount × rate / RATE_SCALE` within ±1 unit tolerance for rounding.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LedgerError::InvalidAmount`] if either amount ≤ 0,
+    /// [`LedgerError::InvalidExchangeRate`] if the rate ≤ 0, or
+    /// [`LedgerError::ExchangeRateMismatch`] if `to_amount` doesn't match the rate.
+    pub fn new_exchange(
+        description: &str,
+        from_account: AccountId,
+        from_amount: Balance,
+        to_account: AccountId,
+        to_amount: Balance,
+        exchange_rate: ExchangeRate,
+        idempotency_key: Option<&str>,
+    ) -> Result<Self, LedgerError> {
+        if from_amount <= 0 {
+            return Err(LedgerError::InvalidAmount(from_amount));
+        }
+        if to_amount <= 0 {
+            return Err(LedgerError::InvalidAmount(to_amount));
+        }
+        if exchange_rate.rate <= 0 {
+            return Err(LedgerError::InvalidExchangeRate(exchange_rate.rate));
+        }
+
+        // Validate: to_amount ≈ from_amount × rate / RATE_SCALE (±1 tolerance for rounding)
+        let expected_to = from_amount * exchange_rate.rate / RATE_SCALE;
+        let diff = (to_amount - expected_to).abs();
+        if diff > 1 {
+            return Err(LedgerError::ExchangeRateMismatch {
+                expected: expected_to,
+                actual: to_amount,
+            });
+        }
+
+        let lines = vec![
+            TransactionLine {
+                account_id: to_account,
+                debit: to_amount,
+                credit: 0,
+            },
+            TransactionLine {
+                account_id: from_account,
+                debit: 0,
+                credit: from_amount,
+            },
+        ];
+
+        Ok(Self {
+            description: description.to_string(),
+            lines,
+            total_debit: to_amount,
+            total_credit: from_amount,
+            idempotency_key: idempotency_key.map(str::to_string),
+            exchange_rate: Some(exchange_rate),
         })
     }
 }
@@ -295,6 +399,11 @@ impl LedgerEntry {
         }
         if let Some(ref key) = transaction.idempotency_key {
             hasher.update(key.as_bytes());
+        }
+        if let Some(ref xr) = transaction.exchange_rate {
+            hasher.update(xr.rate.to_le_bytes());
+            hasher.update(xr.from_currency.as_bytes());
+            hasher.update(xr.to_currency.as_bytes());
         }
         hasher.update(timestamp.to_le_bytes());
         hex::encode(hasher.finalize())

@@ -73,6 +73,37 @@ impl WasmLedger {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// Record a cross-currency exchange via JSON.
+    /// JSON format: { "description": "...", "from_account": id, "from_amount": amount,
+    ///   "to_account": id, "to_amount": amount, "exchange_rate": rate,
+    ///   "timestamp": 123 (optional), "idempotency_key": "XCH-001" (optional) }
+    pub fn record_exchange(&mut self, json: &str) -> Result<u64, JsValue> {
+        let v: serde_json::Value = serde_json::from_str(json)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let description = v["description"].as_str().unwrap_or("");
+        let from_account = v["from_account"].as_u64()
+            .ok_or_else(|| JsValue::from_str("from_account must be u64"))?;
+        let from_amount = v["from_amount"].as_i64()
+            .ok_or_else(|| JsValue::from_str("from_amount must be i64"))? as Balance;
+        let to_account = v["to_account"].as_u64()
+            .ok_or_else(|| JsValue::from_str("to_account must be u64"))?;
+        let to_amount = v["to_amount"].as_i64()
+            .ok_or_else(|| JsValue::from_str("to_amount must be i64"))? as Balance;
+        let exchange_rate = v["exchange_rate"].as_i64()
+            .ok_or_else(|| JsValue::from_str("exchange_rate must be i64"))? as Balance;
+        let timestamp = v["timestamp"].as_u64();
+        let idempotency_key = v["idempotency_key"].as_str();
+
+        let ts = timestamp.unwrap_or_else(crate::types::current_timestamp);
+        self.inner.record_exchange_full(
+            description,
+            crate::types::AccountId(from_account), from_amount,
+            crate::types::AccountId(to_account), to_amount,
+            exchange_rate, ts, idempotency_key,
+        ).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     pub fn verify_chain(&self) -> bool { self.inner.verify_chain() }
 
     pub fn trial_balance(&self) -> f64 { self.inner.trial_balance() as f64 / 100.0 }
