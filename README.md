@@ -1,112 +1,141 @@
 # Kromia Ledger
 
-A deterministic, immutable, and cryptographically chained financial ledger engine built in Rust.
+> A deterministic, tamper-evident, double-entry financial ledger engine — written in Rust, runs anywhere including WebAssembly.
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
-[![Tests](https://img.shields.io/badge/tests-34%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-51%20passing-brightgreen.svg)]()
 
-## Overview
+---
 
-Kromia Ledger is a military-grade, double-entry bookkeeping engine designed for absolute mathematical precision. It uses fixed-point arithmetic (`i128`) with zero floating-point operations, ensuring deterministic results across all platforms — including WebAssembly.
+## Why Kromia Ledger?
 
-Every ledger entry is cryptographically chained via SHA-256, making the entire transaction history tamper-evident and auditable.
+Most financial systems use floating-point math and mutable databases. Both are wrong for accounting:
+
+- **Floating-point** is non-deterministic — `0.1 + 0.2 ≠ 0.3` on different architectures
+- **Mutable records** can be silently edited — a $10,000 entry becomes $1,000 with no trace
+
+Kromia Ledger solves both:
+
+- **Fixed-point `i128` arithmetic** — zero floating-point, exact results on every platform
+- **SHA-256 hash chain** — any modification to any historical entry is immediately detectable, forever
+
+---
+
+## Performance
+
+Benchmarked on a standard laptop (`cargo bench`, release profile, seeded deterministic data):
+
+| Workload | Scale | Time |
+|---|---|---|
+| Record transactions (SHA-256 chained) | 10,000 | **53 ms** |
+| Record transactions (SHA-256 chained) | 100,000 | **532 ms** |
+| Reconcile internal vs external dataset | 10K records, 20 anomalies | **6.7 ms** |
+| Reconcile internal vs external dataset | 100K records, 50 anomalies | **93 ms** |
+| Verify full hash chain | 10,000 entries | **39 ms** |
+| Verify full hash chain | 100,000 entries | **371 ms** |
+
+> **100,000 cryptographically-chained financial transactions recorded in under 1 second.**
+> Reproduce: `cargo bench`
+
+---
 
 ## Features
 
 | Feature | Description |
 |---|---|
-| **Double-Entry Bookkeeping** | Every transaction enforces Σ Debit = Σ Credit. Unbalanced transactions are rejected. |
-| **Fixed-Point Arithmetic** | `i128`-based. Zero floating-point. Precision configurable per currency. |
-| **Cryptographic Chaining** | SHA-256 hash chain links every entry to its predecessor. Tamper = detected. |
-| **Currency-Aware** | Each account carries a `Currency` (code + precision). Cross-currency transactions are rejected. |
-| **Idempotency Keys** | Optional external key per transaction prevents double-processing. |
-| **Atomic Mutations** | All-or-nothing — if any validation fails, ledger state is unchanged. |
-| **Reconciliation Engine** | O(n+m) matching of internal vs. external datasets with mismatch classification. |
-| **JSON Persistence** | Save/load full ledger state with automatic chain integrity verification on restore. |
-| **WebAssembly Ready** | Compiles to both native and WASM via `wasm-bindgen`. |
+| **Double-Entry Bookkeeping** | Every transaction enforces Σ Debit = Σ Credit — unbalanced entries are rejected |
+| **Fixed-Point Arithmetic** | `i128`-based, zero floating-point, configurable precision per currency |
+| **Cryptographic Hash Chain** | SHA-256 links every entry to its predecessor — tamper any record, the chain breaks |
+| **Multi-Currency** | Per-account currency isolation — cross-currency mixing is a runtime error |
+| **Currency Exchange** | Integer-scaled exchange rates (6 decimal precision) for cross-currency transactions |
+| **Idempotency Keys** | Optional external key per transaction prevents double-processing |
+| **Atomic Mutations** | All-or-nothing — validation runs before any state is mutated |
+| **Reconciliation Engine** | O(n+m) matching of internal vs external datasets with 5-way mismatch classification |
+| **JSON Persistence** | Full ledger serialization with automatic chain integrity verification on restore |
+| **WebAssembly Ready** | Compiles to native and WASM via `wasm-bindgen` — same logic, both targets |
+
+---
 
 ## Quick Start
 
-### Installation
+### Add to your project
 
 ```toml
-# Cargo.toml
 [dependencies]
 kromia-ledger = { git = "https://github.com/reyvanevan/kromia-ledger.git" }
 ```
 
-### Basic Usage (Rust)
+### Run the full demo
 
-```rust
-use kromia_ledger::{Ledger, AccountType, Currency};
-
-fn main() {
-    let mut ledger = Ledger::new();
-
-    // Create accounts with currency
-    let cash = ledger.create_account("Cash", "1000", AccountType::Asset, Currency::usd()).unwrap();
-    let revenue = ledger.create_account("Revenue", "4000", AccountType::Revenue, Currency::usd()).unwrap();
-
-    // Record a transaction (amount in smallest unit: 150_00 = $150.00)
-    ledger.record_transaction(
-        "Invoice payment received",
-        &[(cash, 150_00)],    // debits
-        &[(revenue, 150_00)], // credits
-    ).unwrap();
-
-    // Verify chain integrity
-    assert!(ledger.verify_chain());
-    assert_eq!(ledger.trial_balance(), 0);
-}
+```bash
+cargo run --example quickstart
 ```
 
-### With Idempotency Key
-
-```rust
-// Prevent double-processing of the same order
-ledger.record_transaction_full(
-    "Order #1234",
-    &[(cash, 500_00)],
-    &[(revenue, 500_00)],
-    1709251200,             // explicit UTC timestamp
-    Some("ORDER-1234"),     // idempotency key
-).unwrap();
-
-// Second attempt with same key → Err(DuplicateIdempotencyKey)
-let dup = ledger.record_transaction_full(
-    "Order #1234 retry",
-    &[(cash, 500_00)],
-    &[(revenue, 500_00)],
-    1709251201,
-    Some("ORDER-1234"),
-);
-assert!(dup.is_err());
-```
-
-### Multi-Currency (IDR)
+### Basic usage
 
 ```rust
 use kromia_ledger::{Ledger, AccountType, Currency};
 
 let mut ledger = Ledger::new();
-let kas = ledger.create_account("Kas", "1100", AccountType::Asset, Currency::idr()).unwrap();
-let pendapatan = ledger.create_account("Pendapatan", "4100", AccountType::Revenue, Currency::idr()).unwrap();
 
-// IDR has precision=0, so 500_000 = Rp 500.000
+// Create accounts
+let cash    = ledger.create_account("Cash",    "1000", AccountType::Asset,   Currency::usd()).unwrap();
+let revenue = ledger.create_account("Revenue", "4000", AccountType::Revenue, Currency::usd()).unwrap();
+
+// Record a transaction (amounts in smallest unit — 150_00 = $150.00)
 ledger.record_transaction(
-    "Penjualan",
-    &[(kas, 500_000)],
-    &[(pendapatan, 500_000)],
+    "Invoice payment received",
+    &[(cash, 150_00)],    // debit: cash increases
+    &[(revenue, 150_00)], // credit: revenue increases
 ).unwrap();
 
-// Cross-currency is rejected:
-let cash_usd = ledger.create_account("Cash USD", "1200", AccountType::Asset, Currency::usd()).unwrap();
-let result = ledger.record_transaction(
-    "Invalid",
-    &[(cash_usd, 100_00)],
-    &[(pendapatan, 100_00)],  // pendapatan is IDR!
+assert!(ledger.verify_chain());
+assert_eq!(ledger.trial_balance(), 0);
+```
+
+### With idempotency key (prevent double-processing)
+
+```rust
+// First attempt — succeeds
+ledger.record_transaction_full(
+    "Order #A1234 payment",
+    &[(cash, 500_00)],
+    &[(revenue, 500_00)],
+    1735689600,          // explicit UTC timestamp
+    Some("ORDER-A1234"), // idempotency key
+).unwrap();
+
+// Retry with same key — rejected
+let retry = ledger.record_transaction_full(
+    "Order #A1234 payment",
+    &[(cash, 500_00)],
+    &[(revenue, 500_00)],
+    1735689601,
+    Some("ORDER-A1234"),
 );
-assert!(result.is_err()); // CurrencyMismatch
+assert!(retry.is_err()); // DuplicateIdempotencyKey
+```
+
+### Cross-currency exchange
+
+```rust
+use kromia_ledger::RATE_SCALE;
+
+let bank_usd = ledger.create_account("Bank USD", "1100", AccountType::Asset, Currency::usd()).unwrap();
+let bank_idr = ledger.create_account("Bank IDR", "1200", AccountType::Asset, Currency::idr()).unwrap();
+
+// Exchange $100.00 → IDR at 15,700 IDR/USD
+// Rate: 1 USD cent = 157 IDR units → rate = 157 × RATE_SCALE
+let rate       = 157 * RATE_SCALE;
+let usd_amount = 10_000_i128;                      // $100.00 in cents
+let idr_amount = usd_amount * rate / RATE_SCALE;   // 1,570,000 IDR
+
+ledger.record_exchange(
+    "USD to IDR — rate 15,700",
+    bank_usd, usd_amount,
+    bank_idr, idr_amount,
+    rate,
+).unwrap();
 ```
 
 ### Reconciliation
@@ -115,18 +144,33 @@ assert!(result.is_err()); // CurrencyMismatch
 use kromia_ledger::{reconcile, ReconcileRecord, ReconcileStatus};
 
 let internal = vec![
-    ReconcileRecord { id: "TX001".into(), amount: 100_00, date: "2026-03-01".into() },
-    ReconcileRecord { id: "TX002".into(), amount: 200_00, date: "2026-03-01".into() },
+    ReconcileRecord { id: "TX001".into(), amount: 100_00, date: "2026-01-15".into() },
+    ReconcileRecord { id: "TX002".into(), amount: 200_00, date: "2026-01-15".into() },
 ];
 let external = vec![
-    ReconcileRecord { id: "TX001".into(), amount: 99_00,  date: "2026-03-01".into() },
-    ReconcileRecord { id: "TX003".into(), amount: 300_00, date: "2026-03-02".into() },
+    ReconcileRecord { id: "TX001".into(), amount: 99_00,  date: "2026-01-15".into() }, // amount mismatch
+    ReconcileRecord { id: "TX003".into(), amount: 300_00, date: "2026-01-16".into() }, // bank-only
 ];
 
 let results = reconcile(&internal, &external);
 // TX001 → AmountMismatch { internal: 10000, external: 9900 }
-// TX002 → InternalOnly
-// TX003 → ExternalOnly
+// TX002 → InternalOnly  (missing in bank statement)
+// TX003 → ExternalOnly  (missing in ledger)
+```
+
+### JSON Persistence + Tamper Detection
+
+```rust
+// Save full ledger state
+let snapshot = ledger.save_json().unwrap();
+
+// Restore — automatically verifies hash chain
+let restored = Ledger::load_json(&snapshot).unwrap();
+assert!(restored.verify_chain());
+
+// Modify any byte in the snapshot → instant detection
+let tampered = snapshot.replace("Invoice payment", "TAMPERED");
+assert!(Ledger::load_json(&tampered).is_err()); // ChainBroken
 ```
 
 ### Balance Formatting
@@ -134,27 +178,14 @@ let results = reconcile(&internal, &external);
 ```rust
 use kromia_ledger::{format_balance, format_balance_with_currency, parse_balance};
 
-assert_eq!(format_balance(1_234_567_89), "1,234,567.89");
+assert_eq!(format_balance(1_234_567_89),              "1,234,567.89");
 assert_eq!(format_balance_with_currency(250_00, "$"), "$250.00");
-assert_eq!(format_balance_with_currency(1_500_000_00, "Rp"), "Rp1,500,000.00");
-
-assert_eq!(parse_balance("1,234.56").unwrap(), 1_234_56);
+assert_eq!(parse_balance("1,234.56").unwrap(),         1_234_56);
 ```
 
-### JSON Persistence
+---
 
-```rust
-// Save
-let json = ledger.save_json().unwrap();
-std::fs::write("ledger.json", &json).unwrap();
-
-// Load (automatically verifies chain integrity)
-let json = std::fs::read_to_string("ledger.json").unwrap();
-let restored = Ledger::load_json(&json).unwrap();
-assert!(restored.verify_chain());
-```
-
-### WebAssembly (JavaScript/TypeScript)
+## WebAssembly
 
 Build:
 
@@ -162,7 +193,7 @@ Build:
 wasm-pack build --target web
 ```
 
-Usage:
+Use from JavaScript/TypeScript:
 
 ```js
 import init, { WasmLedger } from './pkg/kromia_ledger.js';
@@ -172,38 +203,56 @@ const ledger = new WasmLedger();
 
 // create_account(name, code, type, currency_code, precision)
 // type: 0=Asset, 1=Liability, 2=Equity, 3=Revenue, 4=Expense
-const cash = ledger.create_account("Cash", "1000", 0, "USD", 2);
+const cash = ledger.create_account("Cash",    "1000", 0, "USD", 2);
 const rev  = ledger.create_account("Revenue", "4000", 3, "USD", 2);
 
 ledger.record_transaction(JSON.stringify({
     description: "Payment",
-    debits: [[cash, 15000]],
-    credits: [[rev, 15000]],
-    idempotency_key: "ORDER-001"   // optional
+    debits:  [[cash, 15000]],
+    credits: [[rev,  15000]],
+    idempotency_key: "ORDER-001",
 }));
 
-console.log("Chain valid:", ledger.verify_chain());
-console.log("Trial balance:", ledger.trial_balance());
-console.log("Entries:", ledger.entry_count());
+console.log("Chain valid:   ", ledger.verify_chain());
+console.log("Trial balance: ", ledger.trial_balance());
+console.log("Entry count:   ", ledger.entry_count());
 
-// Persistence
 const snapshot = ledger.save_json();
 const restored = WasmLedger.load_json(snapshot);
 ```
 
+---
+
 ## Architecture
 
 ```
-src/
-├── lib.rs          — Ledger struct, public API, atomic transaction engine
-├── types.rs        — Balance (i128), AccountId, AccountType, Currency,
-│                     Account, Transaction, LedgerEntry, hash computation
-├── validation.rs   — LedgerError enum (10 error variants)
-├── chain.rs        — HashChain: SHA-256 genesis → append → verify
-├── reconcile.rs    — O(n+m) reconciliation with 5-way status classification
-├── format.rs       — Balance ↔ human-readable string (with thousands sep)
-└── wasm.rs         — wasm-bindgen interface for JS/TS consumption
+kromia-ledger/
+├── src/
+│   ├── lib.rs          — Ledger struct, module declarations, public re-exports (~100 lines)
+│   ├── account.rs      — AccountId, AccountType, Currency, ExchangeRate, Account + Ledger account ops
+│   ├── transaction.rs  — TransactionLine, Transaction constructors + Ledger recording methods
+│   ├── entry.rs        — LedgerEntry, SHA-256 hash computation, timestamp helpers
+│   ├── exchange.rs     — Cross-currency exchange (Ledger methods)
+│   ├── persistence.rs  — JSON save/load with automatic chain verification
+│   ├── queries.rs      — Read-only queries, entries_for_account, verify_chain, trial_balance
+│   ├── types.rs        — Re-export hub for all core types
+│   ├── validation.rs   — LedgerError enum (12 variants, thiserror)
+│   ├── chain.rs        — HashChain: genesis → append → verify
+│   ├── reconcile.rs    — O(n+m) reconciliation engine, 5-way status classification
+│   ├── format.rs       — Balance ↔ human-readable string (thousands separator)
+│   └── wasm.rs         — wasm-bindgen thin wrapper (cfg wasm32)
+├── examples/
+│   └── quickstart.rs   — Full API demo: accounts, transactions, exchange, persistence, reconcile
+├── benches/
+│   └── performance.rs  — Criterion benchmarks: 100K transactions, 100K reconciliation
+└── tests/
+    ├── account_tests.rs
+    ├── transaction_tests.rs
+    ├── exchange_tests.rs
+    └── persistence_tests.rs
 ```
+
+---
 
 ## API Reference
 
@@ -211,89 +260,102 @@ src/
 
 | Method | Description |
 |---|---|
-| `new()` | Create empty ledger |
+| `new()` | Create an empty ledger |
 | `create_account(name, code, type, currency)` | Register a new account |
 | `deactivate_account(id)` | Soft-disable an account |
-| `get_account(id)` / `account_by_code(code)` | Lookup account |
-| `get_balance(id)` | Current balance of an account |
-| `accounts()` | Iterate all accounts |
-| `record_transaction(desc, debits, credits)` | Record with auto-timestamp |
-| `record_transaction_at(desc, debits, credits, ts)` | Record with explicit timestamp |
-| `record_transaction_full(desc, debits, credits, ts, key)` | Full control: timestamp + idempotency |
+| `get_account(id)` / `account_by_code(code)` | Look up an account |
+| `get_balance(id)` | Current balance in smallest currency unit |
+| `accounts()` | Iterator over all accounts |
+| `record_transaction(desc, debits, credits)` | Record with system clock |
+| `record_transaction_at(desc, debits, credits, ts)` | Record with explicit UTC timestamp |
+| `record_transaction_full(desc, debits, credits, ts, key)` | Full control: timestamp + idempotency key |
+| `record_exchange(desc, from, from_amt, to, to_amt, rate)` | Cross-currency exchange |
+| `record_exchange_full(...)` | Exchange with explicit timestamp + idempotency key |
 | `entries()` / `find_entry(id)` | Query ledger entries |
-| `entries_for_account(id)` | Entries involving a specific account |
-| `entries_in_range(from, to)` | Entries within a timestamp range |
+| `entries_for_account(id)` | All entries involving a specific account |
+| `entries_in_range(from_ts, to_ts)` | Entries within a timestamp range |
 | `verify_chain()` | Validate entire SHA-256 hash chain |
-| `trial_balance()` | Must return 0 if everything is correct |
-| `save_json()` / `load_json(json)` | Serialize/restore with integrity check |
+| `trial_balance()` | Returns `0` for any balanced single-currency ledger |
+| `save_json()` / `load_json(json)` | Serialize / restore with automatic integrity check |
 
 ### `Currency`
 
-| Constructor | Code | Precision |
-|---|---|---|
-| `Currency::usd()` | USD | 2 |
-| `Currency::idr()` | IDR | 0 |
-| `Currency::eur()` | EUR | 2 |
-| `Currency::new("JPY", 0)` | Any | Custom |
+```rust
+Currency::usd()          // USD, precision = 2 (cents)
+Currency::idr()          // IDR, precision = 0
+Currency::eur()          // EUR, precision = 2
+Currency::new("BTC", 8)  // any ISO 4217 code, custom precision
+```
 
-## Error Handling
+### Error Handling
 
-All operations return `Result<T, LedgerError>`. Error variants:
+All mutations return `Result<T, LedgerError>`:
 
-| Error | Cause |
+| Variant | Cause |
 |---|---|
 | `Unbalanced` | Σ Debit ≠ Σ Credit |
-| `EmptyTransaction` | No debit/credit lines |
-| `InvalidAmount` | Amount ≤ 0 |
-| `AccountNotFound` | Account ID doesn't exist |
+| `EmptyTransaction` | No debit/credit lines provided |
+| `InvalidAmount` | Any amount ≤ 0 |
+| `AccountNotFound` | Account ID does not exist |
 | `InactiveAccount` | Account was deactivated |
-| `DuplicateAccountCode` | Account code already in use |
+| `DuplicateAccountCode` | Account code already registered |
 | `CurrencyMismatch` | Mixed currencies in one transaction |
 | `DuplicateIdempotencyKey` | Idempotency key already used |
-| `ChainBroken` | Hash chain integrity violation |
-| `Serialization` | JSON serialize/deserialize failure |
+| `ExchangeRateMismatch` | `to_amount` doesn't match `from_amount × rate / RATE_SCALE` |
+| `InvalidExchangeRate` | Rate ≤ 0 |
+| `ChainBroken` | Hash chain integrity violation (tamper detected) |
+| `Serialization` | JSON parse/serialize failure |
+
+---
 
 ## Design Decisions
 
-- **Why `i128`?** — Supports values up to ±1.7×10³⁸, enough for any real-world currency without overflow, even at the smallest unit (satoshis, wei, etc.).
-- **Why not `f64`?** — Floating-point is non-deterministic across architectures. `0.1 + 0.2 ≠ 0.3` breaks financial systems. Fixed-point is absolute.
-- **Why hash chain?** — Each entry's hash includes its predecessor. Changing any historical entry invalidates all subsequent hashes. You cannot silently rewrite history.
-- **Why atomic?** — Validation happens in read-only phases. Mutation only begins after all checks pass. Partial state corruption is structurally impossible.
+**Why `i128` and not `f64`?**
+Floating-point arithmetic is non-deterministic across CPU architectures and WASM runtimes. `0.1 + 0.2 = 0.30000000000000004` is not acceptable in a financial system. `i128` supports values up to ±1.7×10³⁸ — enough for satoshis, wei, and any real-world currency at any scale.
 
-## Building
+**Why a hash chain?**
+Each entry's SHA-256 hash is computed from its own content *and* its predecessor's hash. You cannot modify any historical entry without invalidating every subsequent hash. There is no silent rewrite of history.
+
+**Why atomic mutations?**
+The recording methods follow a strict 3-phase pattern: *(1) validate idempotency → (2) validate accounts, balances, currency — read-only → (3) mutate state*. Phase 3 can only be reached if phases 1 and 2 succeed. Partial corruption is structurally impossible.
+
+---
+
+## Development
 
 ```bash
-# Native (release)
-cargo build --release
-
-# WebAssembly
-wasm-pack build --target web
-
-# Run tests
+# Run all 51 tests
 cargo test
 
-# Lint
-cargo clippy
+# Lint (zero warnings policy)
+cargo clippy --all-targets
+
+# Generate documentation
+cargo doc --no-deps --open
+
+# Run benchmarks
+cargo bench
+
+# Run interactive demo
+cargo run --example quickstart
+
+# Build for WebAssembly
+wasm-pack build --target web
 ```
+
+---
 
 ## Testing
 
-```bash
-$ cargo test
+```
+51 tests total — 0 failures
 
-running 34 tests
-...
-test result: ok. 34 passed; 0 failed
+Unit tests   (inline):     16  — chain (4), format (7), reconcile (5)
+Integration  (tests/):     27  — account (9), transaction (6), exchange (8), persistence (4)
+Doc-tests:                  8  — API usage examples embedded in source docs
 ```
 
-Test coverage:
-
-| Module | Tests | What's Covered |
-|---|---|---|
-| `chain` | 4 | Genesis, chaining, tamper detection, serialization roundtrip |
-| `format` | 7 | Format, thousands, currency prefix, parse, roundtrip, edge cases |
-| `reconcile` | 5 | Match, mismatch, internal-only, external-only, 10k performance |
-| `ledger` | 18 | Balance, atomicity, inactive, duplicates, determinism, currency mismatch, idempotency, persistence, tamper |
+---
 
 ## License
 
@@ -304,6 +366,8 @@ Licensed under either of:
 
 at your option.
 
+---
+
 ## Author
 
-**M Reyvan Purnama** — [GitHub](https://github.com/reyvanevan)
+**M Reyvan Purnama** — [GitHub](https://github.com/reyvanevan) · [LinkedIn](https://linkedin.com/in/reyvanevan)
