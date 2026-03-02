@@ -3,7 +3,7 @@
 > A deterministic, tamper-evident, double-entry financial ledger engine — written in Rust, runs anywhere including WebAssembly.
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
-[![Tests](https://img.shields.io/badge/tests-109%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-133%20passing-brightgreen.svg)]()
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
 
 ---
@@ -211,9 +211,10 @@ Currency::new("BTC", 8)  // custom: 8 decimal places (satoshis)
 | **Reconciliation Engine** | O(n+m) matching of internal vs external datasets with 5-way mismatch classification |
 | **Audit Trail** | Tamper-evident `AuditMeta` (actor, source, notes) — included in SHA-256 hash, query by actor |
 | **Financial Reports** | Trial Balance, Balance Sheet, Income Statement, General Ledger — all `Serialize` for JSON export |
+| **Period Closing** | "Tutup buku" — zeroes Revenue/Expense into Retained Earnings, seals the period |
 | **Storage Trait** | Pluggable `LedgerStore` backends — `MemoryStore` (WASM), `JsonFileStore` (native), or implement your own |
 | **JSON Persistence** | Full ledger serialization with automatic chain integrity verification on restore |
-| **WebAssembly Ready** | Compiles to native and WASM via `wasm-bindgen` — same logic, both targets |
+| **WebAssembly Ready** | Full WASM bindings — 27 methods exposed to JS/TS via `wasm-bindgen`, all reports included |
 
 ---
 
@@ -474,6 +475,40 @@ let restored = store.load().unwrap();
 
 Implement `LedgerStore` for any backend (PostgreSQL, S3, Redis, etc.) — the trait is intentionally minimal: `save()`, `load()`, `has_data()`.
 
+### Period Closing (Tutup Buku)
+
+At the end of an accounting period, zero out Revenue and Expense accounts and transfer net income to Retained Earnings.
+
+```rust
+use kromia_ledger::{Ledger, AccountType, Currency};
+
+let mut ledger = Ledger::new();
+let cash     = ledger.create_account("Cash",              "1000", AccountType::Asset,   Currency::usd()).unwrap();
+let equity   = ledger.create_account("Owner Equity",      "3000", AccountType::Equity,  Currency::usd()).unwrap();
+let retained = ledger.create_account("Retained Earnings", "3100", AccountType::Equity,  Currency::usd()).unwrap();
+let revenue  = ledger.create_account("Sales Revenue",     "4000", AccountType::Revenue, Currency::usd()).unwrap();
+let expense  = ledger.create_account("Rent Expense",      "5000", AccountType::Expense, Currency::usd()).unwrap();
+
+ledger.record_transaction("Capital", &[(cash, 10_000_00)], &[(equity, 10_000_00)]).unwrap();
+ledger.record_transaction("Sale",    &[(cash, 3_000_00)],  &[(revenue, 3_000_00)]).unwrap();
+ledger.record_transaction("Rent",    &[(expense, 500_00)], &[(cash, 500_00)]).unwrap();
+
+// Close the period — net income goes to Retained Earnings
+let entry_id = ledger.close_period("USD", 1735689600, retained).unwrap();
+assert!(entry_id.is_some()); // closing entry was created
+
+// Revenue and Expense are now zero
+assert_eq!(ledger.get_balance(revenue).unwrap(), 0);
+assert_eq!(ledger.get_balance(expense).unwrap(), 0);
+
+// Net income ($2,500) transferred to Retained Earnings
+assert_eq!(ledger.get_balance(retained).unwrap(), 2_500_00);
+
+// Period is sealed — backdated entries are rejected
+let err = ledger.record_transaction_at("Late entry", &[(cash, 100)], &[(revenue, 100)], 100);
+assert!(err.is_err()); // LedgerError::PeriodClosed
+```
+
 ---
 
 ## WebAssembly
@@ -494,12 +529,17 @@ import init, { WasmLedger } from './pkg/kromia_ledger.js';
 await init();
 const ledger = new WasmLedger();
 
-// create_account(name, code, type, currency_code, precision)
+// ── Account Management ──────────────────────────────────
 // Account types: 0=Asset, 1=Liability, 2=Equity, 3=Revenue, 4=Expense
 const cash = ledger.create_account("Cash",    "1000", 0, "USD", 2);
 const rev  = ledger.create_account("Revenue", "4000", 3, "USD", 2);
+const re   = ledger.create_account("Retained Earnings", "3100", 2, "USD", 2);
 
-// Record a transaction via JSON
+const accounts = JSON.parse(ledger.get_accounts());   // all accounts as array
+const account  = JSON.parse(ledger.get_account(cash)); // single account by ID
+const byCode   = JSON.parse(ledger.account_by_code("1000")); // by chart code
+
+// ── Transaction Recording ───────────────────────────────
 ledger.record_transaction(JSON.stringify({
     description: "Payment received",
     debits:  [[cash, 15000]],   // $150.00 in cents
@@ -508,15 +548,80 @@ ledger.record_transaction(JSON.stringify({
     audit: { actor: "web-user" },           // optional
 }));
 
-console.log("Chain valid:   ", ledger.verify_chain());   // true
-console.log("Trial balance: ", ledger.trial_balance());  // 0
-console.log("Entry count:   ", ledger.entry_count());    // 1
-console.log("Cash balance:  ", ledger.get_balance_formatted(cash)); // "150.00"
+// ── Balance & Integrity ─────────────────────────────────
+console.log(ledger.verify_chain());            // true
+console.log(ledger.trial_balance());           // 0
+console.log(ledger.entry_count());             // 1
+console.log(ledger.get_balance(cash));         // 15000 (raw cents)
+console.log(ledger.get_balance_formatted(cash)); // "150.00"
 
-// Save / restore
+const tbByCurrency = JSON.parse(ledger.trial_balance_by_currency());
+// { "USD": 0 }
+
+// ── Queries (all return JSON strings) ───────────────────
+const entries    = JSON.parse(ledger.get_entries());              // all entries
+const entry      = JSON.parse(ledger.find_entry(1));              // by ID
+const forAccount = JSON.parse(ledger.entries_for_account(cash));  // by account
+const inRange    = JSON.parse(ledger.entries_in_range(0, 99999)); // by timestamp
+const byActor    = JSON.parse(ledger.entries_by_actor("web-user")); // by actor
+
+// ── Financial Reports (all return JSON strings) ─────────
+const tb = JSON.parse(ledger.trial_balance_report("USD"));
+const bs = JSON.parse(ledger.balance_sheet("USD", Date.now() / 1000));
+const is = JSON.parse(ledger.income_statement("USD", 0, 9999999999));
+const gl = JSON.parse(ledger.general_ledger(cash, 0, 9999999999));
+
+// ── Period Closing ──────────────────────────────────────
+const closingEntryId = ledger.close_period("USD", 1735689600, re);
+// Returns entry ID (number) or null if nothing to close
+
+const periods = JSON.parse(ledger.closed_periods());
+// [{ currency: "USD", closed_at: 1735689600, net_income: 15000, ... }]
+
+// ── Reconciliation (static method) ──────────────────────
+const results = JSON.parse(WasmLedger.reconcile(
+    JSON.stringify([{ id: "TX1", amount: 10000, date: "2026-01-15" }]),
+    JSON.stringify([{ id: "TX1", amount: 9900,  date: "2026-01-15" }]),
+));
+// [{ id: "TX1", status: { "AmountMismatch": { internal: 10000, external: 9900 } } }]
+
+// ── Save / Restore ──────────────────────────────────────
 const snapshot = ledger.save_json();
 const restored = WasmLedger.load_json(snapshot);
 ```
+
+### WASM API Summary
+
+| Method | Returns | Description |
+|---|---|---|
+| `create_account(name, code, type, currency, precision)` | `number` | Create account (type: 0-4) |
+| `deactivate_account(id)` | `void` | Soft-disable account |
+| `get_account(id)` | `string` (JSON) | Single account by ID |
+| `account_by_code(code)` | `string` (JSON) | Account by chart code |
+| `get_accounts()` | `string` (JSON) | All accounts array |
+| `get_balance(id)` | `number` | Raw balance (cents) |
+| `get_balance_formatted(id)` | `string` | Human-readable balance |
+| `record_transaction(json)` | `number` | Record transaction, return entry ID |
+| `record_exchange(json)` | `number` | Record FX exchange |
+| `get_entries()` | `string` (JSON) | All entries |
+| `find_entry(id)` | `string` (JSON) | Single entry by ID |
+| `entries_for_account(id)` | `string` (JSON) | Entries by account |
+| `entries_in_range(from, to)` | `string` (JSON) | Entries by timestamp |
+| `entries_by_actor(actor)` | `string` (JSON) | Entries by audit actor |
+| `entry_count()` | `number` | Total entries |
+| `verify_chain()` | `boolean` | Hash chain integrity |
+| `trial_balance()` | `number` | Global trial balance |
+| `trial_balance_by_currency()` | `string` (JSON) | Per-currency map |
+| `trial_balance_report(currency)` | `string` (JSON) | Full trial balance report |
+| `balance_sheet(currency, as_of)` | `string` (JSON) | Balance sheet |
+| `income_statement(currency, from, to)` | `string` (JSON) | Income statement |
+| `general_ledger(account_id, from, to)` | `string` (JSON) | General ledger detail |
+| `close_period(currency, ts, re_id)` | `number \| null` | Close period |
+| `close_period_audited(currency, ts, re_id, audit_json)` | `number \| null` | Close with audit |
+| `closed_periods()` | `string` (JSON) | All closed periods |
+| `reconcile(internal, external)` | `string` (JSON) | Static: reconcile datasets |
+| `save_json()` | `string` | Serialize ledger |
+| `load_json(json)` | `WasmLedger` | Static: restore ledger |
 
 ---
 
@@ -553,12 +658,13 @@ kromia-ledger/
 │   ├── queries.rs      — Read-only queries, entries_for_account, verify_chain, trial_balance
 │   ├── report.rs       — Financial reports: Trial Balance, Balance Sheet, Income Statement, General Ledger
 │   ├── store.rs        — LedgerStore trait + MemoryStore (WASM) + JsonFileStore (native)
+│   ├── closing.rs      — Period closing (tutup buku) — zero Rev/Exp → Retained Earnings
 │   ├── types.rs        — Re-export hub for all core types
-│   ├── validation.rs   — LedgerError enum (13 variants, thiserror)
+│   ├── validation.rs   — LedgerError enum (15 variants, thiserror)
 │   ├── chain.rs        — HashChain: genesis → append → verify
 │   ├── reconcile.rs    — O(n+m) reconciliation engine, 5-way status classification
 │   ├── format.rs       — Balance ↔ human-readable string (thousands separator, configurable precision)
-│   └── wasm.rs         — wasm-bindgen thin wrapper (cfg wasm32)
+│   └── wasm.rs         — Full WASM bindings (27 methods) — accounts, tx, reports, closing, reconcile
 ├── examples/
 │   └── quickstart.rs   — Full API demo: accounts, transactions, exchange, reports, persistence
 ├── benches/
@@ -570,7 +676,8 @@ kromia-ledger/
     ├── persistence_tests.rs   — 4 tests
     ├── audit_tests.rs         — 7 tests
     ├── report_tests.rs        — 19 tests
-    └── store_tests.rs         — 13 tests
+    ├── store_tests.rs         — 13 tests
+    └── closing_tests.rs       — 21 tests
 ```
 
 ---
@@ -612,6 +719,10 @@ kromia-ledger/
 | `balance_sheet(currency, as_of)` | `BalanceSheet` | Assets = Liabilities + Equity |
 | `income_statement(currency, from, to)` | `IncomeStatement` | Revenue − Expenses = Net Income |
 | `general_ledger(account_id, from, to)` | `GeneralLedgerReport` | Per-account history with running balance |
+| **Period Closing** | | |
+| `close_period(currency, end_ts, re_id)` | `Result<Option<u64>>` | Close period — zero Rev/Exp → Retained Earnings; seals the period |
+| `close_period_audited(currency, end_ts, re_id, audit)` | `Result<Option<u64>>` | Close with audit trail |
+| `closed_periods()` | `&[ClosedPeriod]` | All closed periods |
 | **Persistence** | | |
 | `save_json()` | `Result<String>` | Serialize entire ledger to pretty-printed JSON |
 | `load_json(json)` *(static)* | `Result<Ledger>` | Restore from JSON with automatic chain verification |
@@ -661,6 +772,8 @@ All mutations return `Result<T, LedgerError>`. Every variant is designed to be a
 | `DuplicateIdempotencyKey` | Idempotency key already used | This is expected on retries — safe to ignore |
 | `ExchangeRateMismatch` | `to_amount ≠ from_amount × rate / RATE_SCALE` | Recalculate the amounts |
 | `InvalidExchangeRate` | Rate ≤ 0 | Use a positive rate |
+| `PeriodClosed` | Entry timestamp falls in a closed period | Use a timestamp after the closing date |
+| `InvalidRetainedEarnings` | RE account is not Equity or wrong currency | Pass a valid Equity account for the same currency |
 | `ChainBroken` | Hash chain integrity violation | Data was tampered — do not trust this ledger |
 | `Serialization` | JSON parse/serialize failure | Check the JSON string for syntax errors |
 | `Storage` | Backend I/O error | Check file permissions, disk space, etc. |
@@ -686,7 +799,7 @@ The recording methods follow a strict 3-phase pattern: *(1) validate idempotency
 ## Development
 
 ```bash
-# Run all 109 tests
+# Run all 133 tests
 cargo test
 
 # Lint (zero warnings policy)
@@ -714,12 +827,12 @@ wasm-pack build --target web
 ## Testing
 
 ```
-109 tests total — 0 failures
+133 tests total — 0 failures
 
 Unit tests   (inline):     24  — chain (4), format (7), reconcile (5), report (8)
-Integration  (tests/):     66  — account (9), transaction (6), exchange (8), persistence (4),
-                                  audit (7), report (19), store (13)
-Doc-tests:                 19  — API usage examples embedded in source docs
+Integration  (tests/):     87  — account (9), transaction (6), exchange (8), persistence (4),
+                                  audit (7), report (19), store (13), closing (21)
+Doc-tests:                 22  — API usage examples embedded in source docs
 ```
 
 Run specific test suites:
@@ -727,6 +840,7 @@ Run specific test suites:
 ```bash
 cargo test --test account_tests      # just account tests
 cargo test --test report_tests       # just report tests
+cargo test --test closing_tests      # just closing tests
 cargo test --doc                     # just doc-tests
 ```
 
@@ -738,7 +852,7 @@ Contributions are welcome! Here's how:
 
 1. **Fork** the repo and create a feature branch
 2. **Write tests** for any new functionality
-3. Ensure **all 109 tests pass**: `cargo test`
+3. Ensure **all 133 tests pass**: `cargo test`
 4. Ensure **zero clippy warnings**: `cargo clippy --all-targets`
 5. Ensure **zero rustdoc warnings**: `cargo doc --no-deps`
 6. Open a **pull request** with a clear description
