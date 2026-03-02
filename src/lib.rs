@@ -22,7 +22,10 @@
 //! - [`validation`] — Error types
 //! - [`chain`] — SHA-256 hash chain
 //! - [`mod@reconcile`] — Dataset reconciliation
-//! - [`mod@format`] — Balance formatting and parsing/// - [`report`] — Financial reports (Trial Balance, Balance Sheet, Income Statement, General Ledger)
+//! - [`mod@format`] — Balance formatting and parsing
+//! - [`report`] — Financial reports (Trial Balance, Balance Sheet, Income Statement, General Ledger)
+//! - [`store`] — Storage trait and backends (MemoryStore, JsonFileStore)
+
 pub mod account;
 pub mod audit;
 pub mod transaction;
@@ -36,6 +39,7 @@ pub mod chain;
 pub mod reconcile;
 pub mod format;
 pub mod report;
+pub mod store;
 
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
@@ -65,6 +69,7 @@ use std::collections::{BTreeMap, HashSet};
 /// - **Audit trail**: [`record_transaction_audited`](Self::record_transaction_audited), [`record_exchange_audited`](Self::record_exchange_audited) — in [`transaction`], [`exchange`]
 /// - **Reports**: [`trial_balance_report`](Self::trial_balance_report), [`balance_sheet`](Self::balance_sheet), [`income_statement`](Self::income_statement), [`general_ledger`](Self::general_ledger) — in [`report`]
 /// - **Persistence**: [`save_json`](Self::save_json), [`load_json`](Self::load_json) — in [`persistence`]
+/// - **Storage backends**: [`store::MemoryStore`], [`store::JsonFileStore`] — in [`store`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ledger {
     pub(crate) accounts: BTreeMap<AccountId, Account>,

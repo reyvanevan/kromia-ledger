@@ -55,4 +55,7 @@ pub enum LedgerError {
 
     #[error("serialization error: {0}")]
     Serialization(String),
+
+    #[error("storage error: {0}")]
+    Storage(String),
 }
