@@ -11,3 +11,4 @@ pub use crate::account::*;
 pub use crate::audit::*;
 pub use crate::transaction::*;
 pub use crate::entry::*;
+pub use crate::report::*;

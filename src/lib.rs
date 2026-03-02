@@ -22,8 +22,7 @@
 //! - [`validation`] — Error types
 //! - [`chain`] — SHA-256 hash chain
 //! - [`mod@reconcile`] — Dataset reconciliation
-//! - [`mod@format`] — Balance formatting and parsing
-
+//! - [`mod@format`] — Balance formatting and parsing/// - [`report`] — Financial reports (Trial Balance, Balance Sheet, Income Statement, General Ledger)
 pub mod account;
 pub mod audit;
 pub mod transaction;
@@ -36,6 +35,7 @@ pub mod validation;
 pub mod chain;
 pub mod reconcile;
 pub mod format;
+pub mod report;
 
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
@@ -46,6 +46,7 @@ pub use chain::HashChain;
 pub use audit::AuditMeta;
 pub use reconcile::{ReconcileRecord, ReconcileResult, ReconcileStatus, reconcile};
 pub use format::{format_balance, format_balance_with_currency, parse_balance, format_amount, format_amount_with_currency, parse_amount};
+pub use report::{TrialBalanceReport, BalanceSheet, IncomeStatement, GeneralLedgerReport, GeneralLedgerLine, ReportRow};
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -62,6 +63,7 @@ use std::collections::{BTreeMap, HashSet};
 /// - **Currency exchange**: [`record_exchange`](Self::record_exchange), [`record_exchange_at`](Self::record_exchange_at), [`record_exchange_full`](Self::record_exchange_full) — in [`exchange`]
 /// - **Queries**: [`entries`](Self::entries), [`find_entry`](Self::find_entry), [`entries_for_account`](Self::entries_for_account), [`entries_in_range`](Self::entries_in_range), [`entries_by_actor`](Self::entries_by_actor), [`verify_chain`](Self::verify_chain), [`trial_balance`](Self::trial_balance), [`trial_balance_by_currency`](Self::trial_balance_by_currency) — in [`queries`]
 /// - **Audit trail**: [`record_transaction_audited`](Self::record_transaction_audited), [`record_exchange_audited`](Self::record_exchange_audited) — in [`transaction`], [`exchange`]
+/// - **Reports**: [`trial_balance_report`](Self::trial_balance_report), [`balance_sheet`](Self::balance_sheet), [`income_statement`](Self::income_statement), [`general_ledger`](Self::general_ledger) — in [`report`]
 /// - **Persistence**: [`save_json`](Self::save_json), [`load_json`](Self::load_json) — in [`persistence`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ledger {
