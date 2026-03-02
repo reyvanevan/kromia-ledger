@@ -3,7 +3,7 @@
 > A deterministic, tamper-evident, double-entry financial ledger engine — written in Rust, runs anywhere including WebAssembly.
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
-[![Tests](https://img.shields.io/badge/tests-51%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-109%20passing-brightgreen.svg)]()
 
 ---
 
@@ -51,6 +51,9 @@ Benchmarked on a standard laptop (`cargo bench`, release profile, seeded determi
 | **Idempotency Keys** | Optional external key per transaction prevents double-processing |
 | **Atomic Mutations** | All-or-nothing — validation runs before any state is mutated |
 | **Reconciliation Engine** | O(n+m) matching of internal vs external datasets with 5-way mismatch classification |
+| **Audit Trail** | Tamper-evident `AuditMeta` (actor, source, notes) — included in SHA-256 hash, query by actor |
+| **Financial Reports** | Trial Balance, Balance Sheet, Income Statement, General Ledger — all `Serialize` for JSON export |
+| **Storage Trait** | Pluggable `LedgerStore` backends — `MemoryStore` (WASM), `JsonFileStore` (native), or implement your own |
 | **JSON Persistence** | Full ledger serialization with automatic chain integrity verification on restore |
 | **WebAssembly Ready** | Compiles to native and WASM via `wasm-bindgen` — same logic, both targets |
 
@@ -183,6 +186,75 @@ assert_eq!(format_balance_with_currency(250_00, "$"), "$250.00");
 assert_eq!(parse_balance("1,234.56").unwrap(),         1_234_56);
 ```
 
+### Audit Trail
+
+```rust
+use kromia_ledger::AuditMeta;
+
+let audit = AuditMeta::new("reyvan")
+    .with_source("POST /api/v1/transactions")
+    .with_notes("Monthly closing");
+
+ledger.record_transaction_audited(
+    "Salary payment",
+    &[(cash, 5_000_00)],
+    &[(revenue, 5_000_00)],
+    1735689600,
+    Some("SALARY-2026-01"),
+    audit,
+).unwrap();
+
+// Query by actor
+let entries = ledger.entries_by_actor("reyvan");
+assert_eq!(entries.len(), 1);
+```
+
+### Financial Reports
+
+```rust
+// Trial Balance
+let tb = ledger.trial_balance_report("USD");
+assert_eq!(tb.total_debit, tb.total_credit);
+
+// Balance Sheet (point-in-time)
+let bs = ledger.balance_sheet("USD", 1735689600);
+assert_eq!(bs.total_assets, bs.total_liabilities_equity);
+
+// Income Statement (date range)
+let is = ledger.income_statement("USD", 0, u64::MAX);
+println!("Net income: {}", is.net_income);
+
+// General Ledger (per-account detail with running balance)
+let gl = ledger.general_ledger(cash, 0, u64::MAX);
+for line in &gl.lines {
+    println!("{}: debit={} credit={} balance={}",
+        line.description, line.debit, line.credit, line.running_balance);
+}
+```
+
+### Storage Backends
+
+```rust
+use kromia_ledger::store::{LedgerStore, MemoryStore};
+
+// Save to memory store (works in WASM)
+let mut store = MemoryStore::new();
+store.save(&ledger).unwrap();
+
+// Load back — chain verified automatically
+let restored = store.load().unwrap();
+assert!(restored.verify_chain());
+```
+
+```rust,ignore
+use kromia_ledger::store::{LedgerStore, JsonFileStore};
+
+// File-based persistence (native only)
+let mut store = JsonFileStore::new("company-ledger.json");
+store.save(&ledger).unwrap();
+let restored = store.load().unwrap();
+```
+
 ---
 
 ## WebAssembly
@@ -228,28 +300,34 @@ const restored = WasmLedger.load_json(snapshot);
 ```
 kromia-ledger/
 ├── src/
-│   ├── lib.rs          — Ledger struct, module declarations, public re-exports (~100 lines)
-│   ├── account.rs      — AccountId, AccountType, Currency, ExchangeRate, Account + Ledger account ops
+│   ├── lib.rs          — Ledger struct, module declarations, public re-exports
+│   ├── account.rs      — AccountId, AccountType, Currency, ExchangeRate, Account + balance ops
+│   ├── audit.rs        — AuditMeta (actor, source, notes) — tamper-evident provenance
 │   ├── transaction.rs  — TransactionLine, Transaction constructors + Ledger recording methods
 │   ├── entry.rs        — LedgerEntry, SHA-256 hash computation, timestamp helpers
 │   ├── exchange.rs     — Cross-currency exchange (Ledger methods)
 │   ├── persistence.rs  — JSON save/load with automatic chain verification
 │   ├── queries.rs      — Read-only queries, entries_for_account, verify_chain, trial_balance
+│   ├── report.rs       — Financial reports: Trial Balance, Balance Sheet, Income Statement, General Ledger
+│   ├── store.rs        — LedgerStore trait + MemoryStore (WASM) + JsonFileStore (native)
 │   ├── types.rs        — Re-export hub for all core types
-│   ├── validation.rs   — LedgerError enum (12 variants, thiserror)
+│   ├── validation.rs   — LedgerError enum (13 variants, thiserror)
 │   ├── chain.rs        — HashChain: genesis → append → verify
 │   ├── reconcile.rs    — O(n+m) reconciliation engine, 5-way status classification
-│   ├── format.rs       — Balance ↔ human-readable string (thousands separator)
+│   ├── format.rs       — Balance ↔ human-readable string (thousands separator, configurable precision)
 │   └── wasm.rs         — wasm-bindgen thin wrapper (cfg wasm32)
 ├── examples/
-│   └── quickstart.rs   — Full API demo: accounts, transactions, exchange, persistence, reconcile
+│   └── quickstart.rs   — Full API demo: accounts, transactions, exchange, reports, persistence
 ├── benches/
 │   └── performance.rs  — Criterion benchmarks: 100K transactions, 100K reconciliation
 └── tests/
-    ├── account_tests.rs
-    ├── transaction_tests.rs
-    ├── exchange_tests.rs
-    └── persistence_tests.rs
+    ├── account_tests.rs       — 9 tests
+    ├── transaction_tests.rs   — 6 tests
+    ├── exchange_tests.rs      — 8 tests
+    ├── persistence_tests.rs   — 4 tests
+    ├── audit_tests.rs         — 7 tests
+    ├── report_tests.rs        — 19 tests
+    └── store_tests.rs         — 13 tests
 ```
 
 ---
@@ -261,22 +339,54 @@ kromia-ledger/
 | Method | Description |
 |---|---|
 | `new()` | Create an empty ledger |
+| **Account Management** | |
 | `create_account(name, code, type, currency)` | Register a new account |
 | `deactivate_account(id)` | Soft-disable an account |
 | `get_account(id)` / `account_by_code(code)` | Look up an account |
 | `get_balance(id)` | Current balance in smallest currency unit |
 | `accounts()` | Iterator over all accounts |
+| **Transaction Recording** | |
 | `record_transaction(desc, debits, credits)` | Record with system clock |
 | `record_transaction_at(desc, debits, credits, ts)` | Record with explicit UTC timestamp |
 | `record_transaction_full(desc, debits, credits, ts, key)` | Full control: timestamp + idempotency key |
+| `record_transaction_audited(desc, debits, credits, ts, key, audit)` | Full control + audit trail |
+| **Currency Exchange** | |
 | `record_exchange(desc, from, from_amt, to, to_amt, rate)` | Cross-currency exchange |
 | `record_exchange_full(...)` | Exchange with explicit timestamp + idempotency key |
+| `record_exchange_audited(...)` | Exchange with full audit trail |
+| **Queries** | |
 | `entries()` / `find_entry(id)` | Query ledger entries |
 | `entries_for_account(id)` | All entries involving a specific account |
 | `entries_in_range(from_ts, to_ts)` | Entries within a timestamp range |
+| `entries_by_actor(actor)` | Entries by audit trail actor |
 | `verify_chain()` | Validate entire SHA-256 hash chain |
 | `trial_balance()` | Returns `0` for any balanced single-currency ledger |
+| `trial_balance_by_currency()` | Per-currency trial balance map |
+| **Financial Reports** | |
+| `trial_balance_report(currency)` | All accounts with debit/credit columns |
+| `balance_sheet(currency, as_of)` | Assets = Liabilities + Equity |
+| `income_statement(currency, from, to)` | Revenue − Expenses = Net Income |
+| `general_ledger(account_id, from, to)` | Per-account history with running balance |
+| **Persistence** | |
 | `save_json()` / `load_json(json)` | Serialize / restore with automatic integrity check |
+
+### `LedgerStore` trait
+
+| Method | Description |
+|---|---|
+| `save(&mut self, &Ledger)` | Persist entire ledger state |
+| `load(&self) -> Result<Ledger>` | Restore with automatic chain verification |
+| `has_data(&self) -> bool` | Check if store contains data |
+
+Built-in backends: `MemoryStore` (tests, WASM), `JsonFileStore` (native, file-based).
+
+### `AuditMeta`
+
+| Method | Description |
+|---|---|
+| `new(actor)` | Create with actor identifier |
+| `.with_source(source)` | Attach origin (IP, endpoint, etc.) |
+| `.with_notes(notes)` | Attach free-form justification |
 
 ### `Currency`
 
@@ -305,6 +415,7 @@ All mutations return `Result<T, LedgerError>`:
 | `InvalidExchangeRate` | Rate ≤ 0 |
 | `ChainBroken` | Hash chain integrity violation (tamper detected) |
 | `Serialization` | JSON parse/serialize failure |
+| `Storage` | Backend I/O error (file, memory, database) |
 
 ---
 
@@ -324,7 +435,7 @@ The recording methods follow a strict 3-phase pattern: *(1) validate idempotency
 ## Development
 
 ```bash
-# Run all 51 tests
+# Run all 109 tests
 cargo test
 
 # Lint (zero warnings policy)
@@ -348,11 +459,12 @@ wasm-pack build --target web
 ## Testing
 
 ```
-51 tests total — 0 failures
+109 tests total — 0 failures
 
-Unit tests   (inline):     16  — chain (4), format (7), reconcile (5)
-Integration  (tests/):     27  — account (9), transaction (6), exchange (8), persistence (4)
-Doc-tests:                  8  — API usage examples embedded in source docs
+Unit tests   (inline):     24  — chain (4), format (7), reconcile (5), report (8)
+Integration  (tests/):     66  — account (9), transaction (6), exchange (8), persistence (4),
+                                  audit (7), report (19), store (13)
+Doc-tests:                 19  — API usage examples embedded in source docs
 ```
 
 ---
