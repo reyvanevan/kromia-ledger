@@ -115,9 +115,13 @@ pub struct GeneralLedgerReport {
 // ── Helper ──────────────────────────────────────────────────────────
 
 fn account_to_row(acc: &crate::account::Account) -> ReportRow {
-    let (debit, credit) = match acc.account_type {
-        AccountType::Asset | AccountType::Expense => (acc.balance, 0),
-        _ => (0, acc.balance),
+    let is_debit_normal = matches!(acc.account_type, AccountType::Asset | AccountType::Expense);
+    let (debit, credit) = if is_debit_normal {
+        // Debit-normal: positive → debit column, negative → credit column
+        if acc.balance >= 0 { (acc.balance, 0) } else { (0, -acc.balance) }
+    } else {
+        // Credit-normal: positive → credit column, negative → debit column
+        if acc.balance >= 0 { (0, acc.balance) } else { (-acc.balance, 0) }
     };
     ReportRow {
         account_id: acc.id,
@@ -242,7 +246,11 @@ impl Ledger {
         let mut revenue = Vec::new();
         let mut expenses = Vec::new();
 
-        for (&acc_id, _) in account_debits.iter().chain(account_credits.iter()) {
+        // Collect unique account IDs (avoids duplicate iteration from chaining two maps)
+        let all_ids: std::collections::BTreeSet<AccountId> =
+            account_debits.keys().chain(account_credits.keys()).copied().collect();
+
+        for acc_id in all_ids {
             let acc = match self.accounts.get(&acc_id) {
                 Some(a) => a,
                 None => continue,
@@ -272,10 +280,6 @@ impl Ledger {
                 _ => {}
             }
         }
-
-        // Deduplicate (BTreeMap chain may visit same key twice)
-        revenue.dedup_by_key(|r| r.account_id);
-        expenses.dedup_by_key(|r| r.account_id);
 
         let total_revenue: Balance = revenue.iter().map(|r| r.credit).sum();
         let total_expenses: Balance = expenses.iter().map(|r| r.debit).sum();
@@ -313,7 +317,7 @@ impl Ledger {
         for entry in self.entries.iter().filter(|e| e.timestamp < from_ts) {
             for line in &entry.transaction.lines {
                 if line.account_id == account_id {
-                    opening += self.line_effect(acc, line);
+                    opening += line_effect(acc, line);
                 }
             }
         }
@@ -324,7 +328,7 @@ impl Ledger {
         for entry in self.entries.iter().filter(|e| e.timestamp >= from_ts && e.timestamp <= to_ts) {
             for line in &entry.transaction.lines {
                 if line.account_id == account_id {
-                    let effect = self.line_effect(acc, line);
+                    let effect = line_effect(acc, line);
                     running += effect;
 
                     lines.push(GeneralLedgerLine {
@@ -354,13 +358,14 @@ impl Ledger {
         })
     }
 
-    /// Compute the balance effect of a single transaction line on an account.
-    fn line_effect(&self, acc: &crate::account::Account, line: &crate::transaction::TransactionLine) -> Balance {
-        match acc.account_type {
-            // Debit-normal: debit increases, credit decreases
-            AccountType::Asset | AccountType::Expense => line.debit - line.credit,
-            // Credit-normal: credit increases, debit decreases
-            _ => line.credit - line.debit,
-        }
+}
+
+/// Compute the balance effect of a single transaction line on an account.
+fn line_effect(acc: &crate::account::Account, line: &crate::transaction::TransactionLine) -> Balance {
+    match acc.account_type {
+        // Debit-normal: debit increases, credit decreases
+        AccountType::Asset | AccountType::Expense => line.debit - line.credit,
+        // Credit-normal: credit increases, debit decreases
+        _ => line.credit - line.debit,
     }
 }
