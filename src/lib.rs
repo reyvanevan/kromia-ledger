@@ -25,7 +25,7 @@
 //! - [`mod@format`] — Balance formatting and parsing
 //! - [`report`] — Financial reports (Trial Balance, Balance Sheet, Income Statement, General Ledger)
 //! - [`store`] — Storage trait and backends (MemoryStore, JsonFileStore)
-
+//! - [`closing`] — Period closing ("tutup buku") — zeroes Revenue/Expense into Retained Earnings
 pub mod account;
 pub mod audit;
 pub mod transaction;
@@ -40,6 +40,7 @@ pub mod reconcile;
 pub mod format;
 pub mod report;
 pub mod store;
+pub mod closing;
 
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
@@ -51,6 +52,7 @@ pub use audit::AuditMeta;
 pub use reconcile::{ReconcileRecord, ReconcileResult, ReconcileStatus, reconcile};
 pub use format::{format_balance, format_balance_with_currency, parse_balance, format_amount, format_amount_with_currency, parse_amount};
 pub use report::{TrialBalanceReport, BalanceSheet, IncomeStatement, GeneralLedgerReport, GeneralLedgerLine, ReportRow};
+pub use closing::ClosedPeriod;
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -68,6 +70,7 @@ use std::collections::{BTreeMap, HashSet};
 /// - **Queries**: [`entries`](Self::entries), [`find_entry`](Self::find_entry), [`entries_for_account`](Self::entries_for_account), [`entries_in_range`](Self::entries_in_range), [`entries_by_actor`](Self::entries_by_actor), [`verify_chain`](Self::verify_chain), [`trial_balance`](Self::trial_balance), [`trial_balance_by_currency`](Self::trial_balance_by_currency) — in [`queries`]
 /// - **Audit trail**: [`record_transaction_audited`](Self::record_transaction_audited), [`record_exchange_audited`](Self::record_exchange_audited) — in [`transaction`], [`exchange`]
 /// - **Reports**: [`trial_balance_report`](Self::trial_balance_report), [`balance_sheet`](Self::balance_sheet), [`income_statement`](Self::income_statement), [`general_ledger`](Self::general_ledger) — in [`report`]
+/// - **Closing Periods**: [`close_period`](Self::close_period), [`close_period_audited`](Self::close_period_audited), [`closed_periods`](Self::closed_periods) — in [`closing`]
 /// - **Persistence**: [`save_json`](Self::save_json), [`load_json`](Self::load_json) — in [`persistence`]
 /// - **Storage backends**: [`store::MemoryStore`], [`store::JsonFileStore`] — in [`store`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +81,8 @@ pub struct Ledger {
     pub(crate) idempotency_keys: HashSet<String>,
     pub(crate) next_account_id: u64,
     pub(crate) next_entry_id: u64,
+    #[serde(default)]
+    pub(crate) closed_periods: Vec<closing::ClosedPeriod>,
 }
 
 impl Ledger {
@@ -100,6 +105,7 @@ impl Ledger {
             idempotency_keys: HashSet::new(),
             next_account_id: 1,
             next_entry_id: 1,
+            closed_periods: Vec::new(),
         }
     }
 }

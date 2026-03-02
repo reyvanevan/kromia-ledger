@@ -277,7 +277,7 @@ impl Ledger {
         self.record_transaction_impl(description, debits, credits, timestamp, idempotency_key, Some(audit))
     }
 
-    fn record_transaction_impl(
+    pub(crate) fn record_transaction_impl(
         &mut self,
         description: &str,
         debits: &[(AccountId, Balance)],
@@ -316,6 +316,16 @@ impl Ledger {
                     }
                 }
             }
+        }
+
+        // Phase 2b: Reject entries in a closed period
+        if let Some(currency) = tx_currency
+            && let Some(closed_at) = self.is_period_closed(&currency.code, timestamp)
+        {
+            return Err(LedgerError::PeriodClosed {
+                currency: currency.code.clone(),
+                closed_at,
+            });
         }
 
         // Phase 3: All checks passed — mutate state (cannot fail from here)

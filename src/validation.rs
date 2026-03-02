@@ -53,6 +53,12 @@ pub enum LedgerError {
     #[error("chain integrity violation at entry {0}")]
     ChainBroken(u64),
 
+    #[error("period already closed for {currency} at timestamp {closed_at}")]
+    PeriodClosed { currency: String, closed_at: u64 },
+
+    #[error("invalid retained earnings account {account_id}: {reason}")]
+    InvalidRetainedEarnings { account_id: u64, reason: String },
+
     #[error("serialization error: {0}")]
     Serialization(String),
 
