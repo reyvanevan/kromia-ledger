@@ -383,6 +383,62 @@ impl WasmLedger {
         to_json(self.inner.closed_periods())
     }
 
+    // ── Batch Recording ─────────────────────────────────────────────
+
+    /// Record multiple transactions in a single WASM call.
+    ///
+    /// This eliminates per-transaction JS→WASM boundary crossings, making
+    /// bulk inserts **significantly** faster than calling `record_transaction`
+    /// in a loop from JavaScript.
+    ///
+    /// **Input:** A JSON array where each element has the same schema as
+    /// `record_transaction`:
+    /// ```json
+    /// [
+    ///   { "description": "Sale #1", "debits": [[1, 100000]], "credits": [[3, 100000]] },
+    ///   { "description": "Sale #2", "debits": [[1, 200000]], "credits": [[3, 200000]], "timestamp": 1709337601 }
+    /// ]
+    /// ```
+    ///
+    /// **Returns:** A JSON array of entry IDs (one per transaction):
+    /// `"[1, 2]"`
+    ///
+    /// **Error behavior — atomic per-transaction, fail-fast:**
+    /// If the Nth transaction fails, the first N−1 transactions are already
+    /// committed (append-only ledger) and the error message includes the
+    /// failing index: `"batch[3]: transaction is unbalanced"`.
+    pub fn record_transactions_batch(&mut self, json_array: &str) -> Result<String, JsValue> {
+        let items: Vec<serde_json::Value> = serde_json::from_str(json_array)
+            .map_err(|e| JsValue::from_str(&format!("invalid JSON array: {e}")))?;
+
+        let mut entry_ids: Vec<u64> = Vec::with_capacity(items.len());
+
+        for (i, v) in items.iter().enumerate() {
+            let description = v["description"].as_str().unwrap_or("");
+            let debits = parse_lines(&v["debits"])
+                .map_err(|e| JsValue::from_str(&format!("batch[{i}]: debits: {e}")))?;
+            let credits = parse_lines(&v["credits"])
+                .map_err(|e| JsValue::from_str(&format!("batch[{i}]: credits: {e}")))?;
+            let timestamp = v["timestamp"].as_u64();
+            let idempotency_key = v["idempotency_key"].as_str();
+            let ts = timestamp.unwrap_or_else(crate::types::current_timestamp);
+
+            let entry_id = match parse_audit(&v["audit"]) {
+                Some(audit) => self.inner.record_transaction_audited(
+                    description, &debits, &credits, ts, idempotency_key, audit,
+                ),
+                None => self.inner.record_transaction_full(
+                    description, &debits, &credits, ts, idempotency_key,
+                ),
+            }
+            .map_err(|e| JsValue::from_str(&format!("batch[{i}]: {e}")))?;
+
+            entry_ids.push(entry_id);
+        }
+
+        to_json(&entry_ids)
+    }
+
     // ── Reconciliation ──────────────────────────────────────────────
 
     /// Reconcile two datasets. Both arguments are JSON arrays of `{ id, amount, date }`.
