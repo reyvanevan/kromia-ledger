@@ -18,3 +18,4 @@ docs/
 
 # WASM build output
 /pkg
+/pkg-nosimd

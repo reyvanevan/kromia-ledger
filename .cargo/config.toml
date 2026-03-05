@@ -1,0 +1,13 @@
+# WASM SIMD acceleration for SHA-256 and general vectorization.
+#
+# sha2 0.10 has no explicit WASM SIMD backend — it uses the pure-Rust
+# `soft` compress implementation on wasm32. Enabling +simd128 lets LLVM
+# auto-vectorize the compress loop and other hot paths (serde, hex encoding).
+#
+# Browser support: Chrome 91+, Firefox 89+, Safari 16.4+, Node 16.4+
+# (covers ~96% of global browser traffic as of 2025).
+#
+# This flag ONLY applies to wasm32 builds — native builds are unaffected.
+
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]
