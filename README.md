@@ -3,7 +3,7 @@
 > A deterministic, tamper-evident, double-entry financial ledger engine — written in Rust, runs anywhere including WebAssembly.
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
-[![Tests](https://img.shields.io/badge/tests-133%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-140%20passing-brightgreen.svg)]()
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
 
 ---
@@ -21,6 +21,8 @@
 - [Architecture](#architecture)
 - [API Reference](#api-reference)
 - [Error Handling](#error-handling)
+- [Common Pitfalls](#common-pitfalls)
+- [Migrating from an Existing System](#migrating-from-an-existing-system)
 - [Design Decisions](#design-decisions)
 - [Development](#development)
 - [Testing](#testing)
@@ -214,7 +216,7 @@ Currency::new("BTC", 8)  // custom: 8 decimal places (satoshis)
 | **Period Closing** | "Tutup buku" — zeroes Revenue/Expense into Retained Earnings, seals the period |
 | **Storage Trait** | Pluggable `LedgerStore` backends — `MemoryStore` (WASM), `JsonFileStore` (native), or implement your own |
 | **JSON Persistence** | Full ledger serialization with automatic chain integrity verification on restore |
-| **WebAssembly Ready** | Full WASM bindings — 27 methods exposed to JS/TS via `wasm-bindgen`, all reports included |
+| **WebAssembly Ready** | Full WASM bindings — 28 methods exposed to JS/TS via `wasm-bindgen`, all reports included |
 
 ---
 
@@ -309,6 +311,35 @@ ledger.record_exchange(
 
 assert_eq!(ledger.get_balance(bank_usd).unwrap(), 10_000_00 - 10_000); // 9,900.00 in cents
 assert_eq!(ledger.get_balance(bank_idr).unwrap(), 1_570_000);           // Rp 1,570,000
+```
+
+#### Exchange Rate Quick Reference
+
+The formula is always: **`rate = (to_amount / from_amount) × RATE_SCALE`**
+
+Where `RATE_SCALE = 1_000_000` (6-decimal precision).
+
+| Pair | From Amount | To Amount | Rate Calculation | Rate Value |
+|---|---|---|---|---|
+| **USD → IDR** (rate 15,700) | 10,000 (= $100.00, p=2) | 1,570,000 (= Rp 1,570,000, p=0) | 1,570,000 / 10,000 × 1M | 157,000,000 |
+| **IDR → USD** (rate 1/15,700) | 1,570,000 (= Rp 1,570,000, p=0) | 10,000 (= $100.00, p=2) | 10,000 / 1,570,000 × 1M | 6,369 |
+| **EUR → USD** (rate 1.08) | 500,00 (= €500.00, p=2) | 540,00 (= $540.00, p=2) | 54,000 / 50,000 × 1M | 1,080,000 |
+| **BTC → USD** (rate 65,000) | 100,000,000 (= 1 BTC, p=8) | 6,500,000 (= $65,000.00, p=2) | 6,500,000 / 100,000,000 × 1M | 65,000 |
+| **USD → JPY** (rate 150) | 1,000,00 (= $1,000.00, p=2) | 150,000 (= ¥150,000, p=0) | 150,000 / 100,000 × 1M | 1,500,000 |
+
+> **Key insight:** The rate depends on the **raw integer amounts**, not the human-readable values. A "rate of 15,700 IDR per USD" becomes `157_000_000` because you're dividing IDR-integer by cent-integer, not rupiah by dollar.
+
+**Edge case — reverse rate:**
+
+```rust
+// If you know USD→IDR rate is 157_000_000, what is IDR→USD?
+// Don't invert the rate directly — compute from the amounts:
+let idr_amount = 1_570_000_i128;                     // Rp 1,570,000
+let usd_amount = 10_000_i128;                         // $100.00 in cents
+let rate_idr_to_usd = usd_amount * RATE_SCALE / idr_amount; // 6,369
+//
+// This rate is asymmetric because the precisions differ (cents vs whole rupiah).
+// Always compute rate from amounts — never divide RATE_SCALE by the forward rate.
 ```
 
 ### Reconciliation
@@ -521,6 +552,25 @@ Kromia Ledger compiles to WASM — the same engine runs in the browser with zero
 wasm-pack build --target web
 ```
 
+For SIMD-accelerated builds (Chrome 91+, Firefox 89+, Safari 16.4+):
+
+```bash
+# Dual build: SIMD (pkg/) + non-SIMD fallback (pkg-nosimd/)
+./scripts/build-wasm.sh
+
+# SIMD only
+./scripts/build-wasm.sh --simd-only
+```
+
+The SIMD build enables LLVM auto-vectorization of SHA-256 and hot paths via WebAssembly SIMD128. Detect browser support at runtime:
+
+```js
+const simdSupported = WebAssembly.validate(new Uint8Array([
+    0,97,115,109,1,0,0,0,1,5,1,96,0,1,123,3,2,1,0,10,10,1,8,0,65,0,253,15,253,98,11
+]));
+// Load from pkg/ (SIMD) or pkg-nosimd/ (fallback) accordingly
+```
+
 ### Use from JavaScript / TypeScript
 
 ```js
@@ -602,6 +652,7 @@ const restored = WasmLedger.load_json(snapshot);
 | `get_balance(id)` | `number` | Raw balance (cents) |
 | `get_balance_formatted(id)` | `string` | Human-readable balance |
 | `record_transaction(json)` | `number` | Record transaction, return entry ID |
+| `record_transactions_batch(json_array)` | `string` (JSON) | Batch-record array of transactions in one call |
 | `record_exchange(json)` | `number` | Record FX exchange |
 | `get_entries()` | `string` (JSON) | All entries |
 | `find_entry(id)` | `string` (JSON) | Single entry by ID |
@@ -622,6 +673,97 @@ const restored = WasmLedger.load_json(snapshot);
 | `reconcile(internal, external)` | `string` (JSON) | Static: reconcile datasets |
 | `save_json()` | `string` | Serialize ledger |
 | `load_json(json)` | `WasmLedger` | Static: restore ledger |
+
+### Error Handling in JavaScript
+
+All WASM methods throw plain **strings** on failure (not `Error` objects). Always wrap calls in `try / catch`:
+
+```js
+try {
+    ledger.record_transaction(JSON.stringify({
+        description: "Payment",
+        debits:  [[cashId, 15000]],
+        credits: [[revId,  15000]],
+    }));
+} catch (e) {
+    // e is a string, e.g. "transaction is unbalanced: debit=15000, credit=10000"
+    console.error("Ledger error:", e);
+}
+```
+
+**Every possible error string from WASM:**
+
+| Error String | When |
+|---|---|
+| `"transaction is unbalanced: debit=X, credit=Y"` | Σ Debit ≠ Σ Credit |
+| `"transaction must have at least one line"` | Empty debits or credits array |
+| `"invalid amount: X (must be positive)"` | Amount ≤ 0 in a line |
+| `"account not found: X"` | Account ID does not exist |
+| `"account is inactive: X"` | Account was deactivated |
+| `"duplicate account code: X"` | Code already registered |
+| `"currency mismatch in transaction: expected X, found Y on account Z"` | Mixed currencies in one transaction |
+| `"duplicate idempotency key: X"` | Idempotency key already used (safe to ignore on retry) |
+| `"exchange rate mismatch: expected to_amount=X, got Y"` | `to_amount ≠ from_amount × rate / RATE_SCALE` |
+| `"invalid exchange rate: X (must be positive)"` | Rate ≤ 0 |
+| `"chain integrity violation at entry X"` | Hash chain broken (data tampered) |
+| `"period already closed for X at timestamp Y"` | Entry falls in a closed period |
+| `"invalid retained earnings account X: reason"` | Wrong account type for period closing |
+| `"serialization error: reason"` | JSON parse/serialize failure |
+| `"invalid account type (0=Asset, 1=Liability, 2=Equity, 3=Revenue, 4=Expense)"` | Bad type argument |
+| `"account not found"` | `get_account()`, `get_balance()`, etc. with invalid ID |
+| `"batch[N]: reason"` | `record_transactions_batch` — Nth transaction failed (0-indexed) |
+
+**Recommended pattern — map to user-friendly messages:**
+
+```js
+function handleLedgerError(e) {
+    const msg = String(e);
+    if (msg.includes("unbalanced"))        return "Entry is unbalanced — debits must equal credits.";
+    if (msg.includes("account not found")) return "Account does not exist. Check the account ID.";
+    if (msg.includes("period already closed")) return "Cannot backdate — this period is closed.";
+    if (msg.includes("duplicate idempotency")) return "This transaction was already recorded.";
+    if (msg.includes("currency mismatch")) return "Use Exchange for cross-currency transactions.";
+    return `Ledger error: ${msg}`;
+}
+
+try {
+    ledger.record_transaction(txJson);
+} catch (e) {
+    showToast(handleLedgerError(e), "error");
+}
+```
+
+### Batch Recording
+
+For bulk operations (imports, stress tests), use `record_transactions_batch()` to send all transactions in a single WASM call — zero per-transaction boundary crossing:
+
+```js
+const transactions = [
+    {
+        description: "Sale #1",
+        debits: [[cashId, 10000]],
+        credits: [[revId, 10000]],
+    },
+    {
+        description: "Sale #2",
+        debits: [[cashId, 20000]],
+        credits: [[revId, 20000]],
+        idempotency_key: "SALE-002",
+        audit: { actor: "import-script" },
+    },
+];
+
+try {
+    const entryIds = JSON.parse(
+        ledger.record_transactions_batch(JSON.stringify(transactions))
+    );
+    console.log(`Recorded ${entryIds.length} transactions`);
+} catch (e) {
+    // e.g. "batch[1]: transaction is unbalanced: debit=20000, credit=10000"
+    // Fail-fast: transactions before the failing index ARE committed
+    console.error(e);
+}
+```
 
 ---
 
@@ -677,7 +819,8 @@ kromia-ledger/
     ├── audit_tests.rs         — 7 tests
     ├── report_tests.rs        — 19 tests
     ├── store_tests.rs         — 13 tests
-    └── closing_tests.rs       — 21 tests
+    ├── closing_tests.rs       — 21 tests
+    └── batch_tests.rs         — 7 tests
 ```
 
 ---
@@ -780,6 +923,85 @@ All mutations return `Result<T, LedgerError>`. Every variant is designed to be a
 
 ---
 
+## Common Pitfalls
+
+Things that trip up developers new to Kromia Ledger or double-entry accounting in general.
+
+### 1. Period Closing Is Permanent
+
+Once you call `close_period("USD", end_ts, retained_earnings)`, **any transaction with a timestamp ≤ `end_ts` is rejected forever** for that currency. There is no "reopen period" — this is by design (matches real-world accounting regulation).
+
+```js
+ledger.close_period("USD", 1735689600, retainedEarningsId);
+
+// This will throw — timestamp 100 falls before the closed boundary:
+ledger.record_transaction(JSON.stringify({
+    description: "Late entry",
+    debits: [[cashId, 5000]], credits: [[revId, 5000]],
+    timestamp: 100,  // ← before 1735689600
+}));
+// → "period already closed for USD at timestamp 1735689600"
+```
+
+**Tip:** Use a confirmation dialog before closing. Show the user exactly which date they're sealing.
+
+### 2. `trial_balance() = 0` Means Everything Is Correct
+
+In double-entry accounting, a zero trial balance means all debits equal all credits — **the books are balanced**. It does *not* mean "no data" or "empty ledger."
+
+```js
+console.log(ledger.trial_balance()); // 0 ← this is GOOD
+```
+
+A non-zero value means something is structurally wrong (should not happen with valid API usage, since every mutation enforces balance).
+
+### 3. Account Currency Is Nested, Not Flat
+
+`get_accounts()` and `get_account()` return currency as a **nested object**, not a flat string:
+
+```js
+const account = JSON.parse(ledger.get_account(cashId));
+// ✅ Correct:
+account.currency.code      // "USD"
+account.currency.precision // 2
+
+// ❌ Wrong (these are undefined):
+account.currency_code
+account.precision
+```
+
+### 4. Balances Are Raw Integers — Don't Display Directly
+
+`get_balance(id)` returns the raw integer in the smallest currency unit. For USD with precision=2, `15000` means $150.00, not $15,000.
+
+```js
+const raw = ledger.get_balance(cashId);         // 15000
+const display = ledger.get_balance_formatted(cashId); // "150.00"
+
+// ❌ Don't do this:
+element.textContent = `$${raw}`;  // shows "$15000" — wrong!
+
+// ✅ Do this:
+element.textContent = `$${display}`; // shows "$150.00" — correct
+```
+
+### 5. Exchange Rates Must Be Mathematically Consistent
+
+The engine verifies that `to_amount == from_amount * rate / RATE_SCALE`. If you round `to_amount` independently, the check may fail:
+
+```js
+// ❌ This will throw ExchangeRateMismatch:
+const rate = 157_000_000;
+const from_amount = 333;          // $3.33
+const to_amount = 52_300;         // you rounded to Rp 52,300
+// Engine expects: 333 * 157_000_000 / 1_000_000 = 52_281
+
+// ✅ Always derive to_amount from the formula:
+const to_amount = Math.floor(from_amount * rate / 1_000_000); // 52_281
+```
+
+---
+
 ## Design Decisions
 
 **Why `i128` and not `f64`?**
@@ -796,10 +1018,72 @@ The recording methods follow a strict 3-phase pattern: *(1) validate idempotency
 
 ---
 
+## Migrating from an Existing System
+
+If you're moving from a legacy accounting system, Kromia Ledger can absorb your historical data in three steps.
+
+### Step 1: Create All Accounts
+
+Map your existing chart of accounts to Kromia Ledger accounts. Use the same account codes for easy reconciliation:
+
+```rust
+let cash     = ledger.create_account("Cash",              "1000", AccountType::Asset,   Currency::usd())?;
+let ar       = ledger.create_account("Accounts Receivable","1200", AccountType::Asset,   Currency::usd())?;
+let revenue  = ledger.create_account("Sales Revenue",     "4000", AccountType::Revenue, Currency::usd())?;
+let opening  = ledger.create_account("Opening Balances",  "3900", AccountType::Equity,  Currency::usd())?;
+// ... all your accounts
+```
+
+### Step 2: Record Opening Balances
+
+For each account with a non-zero balance, record a single opening balance transaction against a temporary **Opening Balances** equity account:
+
+```rust
+// Cash has an opening balance of $50,000.00
+ledger.record_transaction(
+    "Opening balance — Cash",
+    &[(cash, 5_000_000)],     // debit: Asset increases
+    &[(opening, 5_000_000)],  // credit: Opening Balances equity
+)?;
+
+// Accounts Receivable: $12,300.00
+ledger.record_transaction(
+    "Opening balance — AR",
+    &[(ar, 1_230_000)],
+    &[(opening, 1_230_000)],
+)?;
+```
+
+After all opening balances are recorded, `trial_balance()` will be 0, and the Opening Balances account absorbs the net position.
+
+### Step 3: Bulk Import Historical Transactions
+
+Parse your export (CSV, JSON, database dump) and loop through:
+
+```rust
+for row in csv_rows {
+    ledger.record_transaction_full(
+        &row.description,
+        &[(debit_account, row.amount)],
+        &[(credit_account, row.amount)],
+        row.timestamp,
+        Some(&row.reference_number),  // idempotency key prevents duplicates on re-import
+    )?;
+}
+
+// Verify everything at the end
+assert!(ledger.verify_chain());
+assert_eq!(ledger.trial_balance(), 0);
+```
+
+> **Performance:** 100,000 cryptographically-chained transactions import in **532 ms** (native) or **~900 ms** (WASM). Historical data volume is not a concern.
+
+---
+
 ## Development
 
 ```bash
-# Run all 133 tests
+# Run all 140 tests
 cargo test
 
 # Lint (zero warnings policy)
@@ -816,6 +1100,9 @@ cargo run --example quickstart
 
 # Build for WebAssembly
 wasm-pack build --target web
+
+# Build for WebAssembly (SIMD + fallback)
+./scripts/build-wasm.sh
 ```
 
 ### Minimum Supported Rust Version (MSRV)
@@ -827,11 +1114,11 @@ wasm-pack build --target web
 ## Testing
 
 ```
-133 tests total — 0 failures
+140 tests total — 0 failures
 
 Unit tests   (inline):     24  — chain (4), format (7), reconcile (5), report (8)
-Integration  (tests/):     87  — account (9), transaction (6), exchange (8), persistence (4),
-                                  audit (7), report (19), store (13), closing (21)
+Integration  (tests/):     94  — account (9), transaction (6), exchange (8), persistence (4),
+                                  audit (7), report (19), store (13), closing (21), batch (7)
 Doc-tests:                 22  — API usage examples embedded in source docs
 ```
 
@@ -841,6 +1128,7 @@ Run specific test suites:
 cargo test --test account_tests      # just account tests
 cargo test --test report_tests       # just report tests
 cargo test --test closing_tests      # just closing tests
+cargo test --test batch_tests        # just batch API tests
 cargo test --doc                     # just doc-tests
 ```
 
@@ -852,7 +1140,7 @@ Contributions are welcome! Here's how:
 
 1. **Fork** the repo and create a feature branch
 2. **Write tests** for any new functionality
-3. Ensure **all 133 tests pass**: `cargo test`
+3. Ensure **all 140 tests pass**: `cargo test`
 4. Ensure **zero clippy warnings**: `cargo clippy --all-targets`
 5. Ensure **zero rustdoc warnings**: `cargo doc --no-deps`
 6. Open a **pull request** with a clear description
